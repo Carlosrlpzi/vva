@@ -1,0 +1,271 @@
+{
+  "$defs": {
+    "CameraBench": {
+      "additionalProperties": false,
+      "properties": {
+        "camera_id": {
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+          "title": "Camera Id",
+          "type": "string"
+        },
+        "n_frames": {
+          "minimum": 2,
+          "title": "N Frames",
+          "type": "integer"
+        },
+        "span_s": {
+          "exclusiveMinimum": 0.0,
+          "title": "Span S",
+          "type": "number"
+        },
+        "throughput_fps": {
+          "exclusiveMinimum": 0.0,
+          "title": "Throughput Fps",
+          "type": "number"
+        },
+        "n_out_of_order": {
+          "minimum": 0,
+          "title": "N Out Of Order",
+          "type": "integer"
+        },
+        "end_to_end": {
+          "$ref": "#/$defs/LatencyQuantiles"
+        },
+        "inference": {
+          "$ref": "#/$defs/LatencyQuantiles"
+        },
+        "queueing": {
+          "$ref": "#/$defs/LatencyQuantiles"
+        }
+      },
+      "required": [
+        "camera_id",
+        "n_frames",
+        "span_s",
+        "throughput_fps",
+        "n_out_of_order",
+        "end_to_end",
+        "inference",
+        "queueing"
+      ],
+      "title": "CameraBench",
+      "type": "object"
+    },
+    "InputFingerprint": {
+      "additionalProperties": false,
+      "description": "Which exact bytes produced a report: the audit trail of every input.\n\nIf someone later asks \"was this mAP computed on the current predictions\nfile?\", the answer is a hash comparison, not a recollection.",
+      "properties": {
+        "role": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Role",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "role",
+        "path",
+        "sha256",
+        "size_bytes"
+      ],
+      "title": "InputFingerprint",
+      "type": "object"
+    },
+    "LatencyQuantiles": {
+      "additionalProperties": false,
+      "properties": {
+        "p50_ms": {
+          "minimum": 0.0,
+          "title": "P50 Ms",
+          "type": "number"
+        },
+        "p90_ms": {
+          "minimum": 0.0,
+          "title": "P90 Ms",
+          "type": "number"
+        },
+        "p99_ms": {
+          "minimum": 0.0,
+          "title": "P99 Ms",
+          "type": "number"
+        },
+        "max_ms": {
+          "minimum": 0.0,
+          "title": "Max Ms",
+          "type": "number"
+        }
+      },
+      "required": [
+        "p50_ms",
+        "p90_ms",
+        "p99_ms",
+        "max_ms"
+      ],
+      "title": "LatencyQuantiles",
+      "type": "object"
+    },
+    "SystemSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "n_samples": {
+          "minimum": 0,
+          "title": "N Samples",
+          "type": "integer"
+        },
+        "cpu_temp_c_max": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cpu Temp C Max"
+        },
+        "cpu_percent_p95": {
+          "anyOf": [
+            {
+              "maximum": 100.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cpu Percent P95"
+        },
+        "throttled_any": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Throttled Any"
+        }
+      },
+      "required": [
+        "n_samples",
+        "cpu_temp_c_max",
+        "cpu_percent_p95",
+        "throttled_any"
+      ],
+      "title": "SystemSummary",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract_id": {
+      "const": "PipelineBenchReport",
+      "default": "PipelineBenchReport",
+      "title": "Contract Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "tool_version": {
+      "title": "Tool Version",
+      "type": "string"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/InputFingerprint"
+      },
+      "title": "Inputs",
+      "type": "array"
+    },
+    "target_fps": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Target Fps"
+    },
+    "temp_warn_c": {
+      "title": "Temp Warn C",
+      "type": "number"
+    },
+    "latency_budget_ms": {
+      "exclusiveMinimum": 0.0,
+      "title": "Latency Budget Ms",
+      "type": "number"
+    },
+    "cameras": {
+      "items": {
+        "$ref": "#/$defs/CameraBench"
+      },
+      "minItems": 1,
+      "title": "Cameras",
+      "type": "array"
+    },
+    "system": {
+      "$ref": "#/$defs/SystemSummary"
+    },
+    "flags": {
+      "items": {
+        "enum": [
+          "FPS_BELOW_TARGET",
+          "LATENCY_OVER_BUDGET",
+          "HIGH_TEMPERATURE",
+          "THROTTLED",
+          "OUT_OF_ORDER_FRAMES"
+        ],
+        "type": "string"
+      },
+      "title": "Flags",
+      "type": "array"
+    },
+    "verdict": {
+      "enum": [
+        "PASS",
+        "WARN",
+        "FAIL"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "required": [
+    "tool_version",
+    "inputs",
+    "target_fps",
+    "temp_warn_c",
+    "latency_budget_ms",
+    "cameras",
+    "system",
+    "flags",
+    "verdict"
+  ],
+  "title": "PipelineBenchReport",
+  "type": "object"
+}

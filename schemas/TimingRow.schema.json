@@ -1,0 +1,72 @@
+{
+  "additionalProperties": false,
+  "description": "Per-frame timing record written by the pipeline (seconds, one clock).\n\nStages: capture -> inference start -> inference end -> done (rules,\npersistence). A dropped frame only has ``t_capture``.",
+  "properties": {
+    "camera_id": {
+      "pattern": "^[A-Za-z0-9_.-]{1,64}$",
+      "title": "Camera Id",
+      "type": "string"
+    },
+    "frame_idx": {
+      "minimum": 0,
+      "title": "Frame Idx",
+      "type": "integer"
+    },
+    "t_capture": {
+      "minimum": 0.0,
+      "title": "T Capture",
+      "type": "number"
+    },
+    "t_infer_start": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "T Infer Start"
+    },
+    "t_infer_end": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "T Infer End"
+    },
+    "t_done": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "T Done"
+    },
+    "dropped": {
+      "default": false,
+      "title": "Dropped",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "camera_id",
+    "frame_idx",
+    "t_capture"
+  ],
+  "title": "TimingRow",
+  "type": "object"
+}

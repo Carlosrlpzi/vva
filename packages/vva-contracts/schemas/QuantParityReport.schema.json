@@ -1,0 +1,462 @@
+{
+  "$defs": {
+    "BoxAgreement": {
+      "additionalProperties": false,
+      "description": "Do the two models fire on the same boxes at the operating threshold?\n\n``dice = 2 * matched / (n_reference + n_candidate)``: 1.0 means every box\nof each model has a same-class counterpart (IoU >= 0.5) in the other.\nIt complements \u0394 mAP, which can hide swaps (one model gains a box where\nthe other loses one) that matter for alert behaviour.",
+      "properties": {
+        "iou_threshold": {
+          "default": 0.5,
+          "maximum": 0.5,
+          "minimum": 0.5,
+          "title": "Iou Threshold",
+          "type": "number"
+        },
+        "n_reference_boxes": {
+          "minimum": 0,
+          "title": "N Reference Boxes",
+          "type": "integer"
+        },
+        "n_candidate_boxes": {
+          "minimum": 0,
+          "title": "N Candidate Boxes",
+          "type": "integer"
+        },
+        "n_matched": {
+          "minimum": 0,
+          "title": "N Matched",
+          "type": "integer"
+        },
+        "dice": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dice"
+        },
+        "mean_abs_confidence_delta": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Mean Abs Confidence Delta"
+        }
+      },
+      "required": [
+        "n_reference_boxes",
+        "n_candidate_boxes",
+        "n_matched",
+        "dice",
+        "mean_abs_confidence_delta"
+      ],
+      "title": "BoxAgreement",
+      "type": "object"
+    },
+    "ClassEval": {
+      "additionalProperties": false,
+      "properties": {
+        "class_name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Class Name",
+          "type": "string"
+        },
+        "n_gt": {
+          "minimum": 0,
+          "title": "N Gt",
+          "type": "integer"
+        },
+        "n_pred": {
+          "minimum": 0,
+          "title": "N Pred",
+          "type": "integer"
+        },
+        "ap50": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ap50"
+        },
+        "ap50_95": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ap50 95"
+        },
+        "ap_per_iou": {
+          "anyOf": [
+            {
+              "items": {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ap Per Iou"
+        },
+        "pr_curve_ap50": {
+          "anyOf": [
+            {
+              "items": {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pr Curve Ap50"
+        },
+        "operating_point": {
+          "$ref": "#/$defs/OperatingPoint"
+        }
+      },
+      "required": [
+        "class_name",
+        "n_gt",
+        "n_pred",
+        "ap50",
+        "ap50_95",
+        "ap_per_iou",
+        "pr_curve_ap50",
+        "operating_point"
+      ],
+      "title": "ClassEval",
+      "type": "object"
+    },
+    "DetectionEvalReport": {
+      "additionalProperties": false,
+      "properties": {
+        "contract_id": {
+          "const": "DetectionEvalReport",
+          "default": "DetectionEvalReport",
+          "title": "Contract Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "tool_version": {
+          "title": "Tool Version",
+          "type": "string"
+        },
+        "inputs": {
+          "items": {
+            "$ref": "#/$defs/InputFingerprint"
+          },
+          "title": "Inputs",
+          "type": "array"
+        },
+        "split": {
+          "maxLength": 32,
+          "minLength": 1,
+          "title": "Split",
+          "type": "string"
+        },
+        "iou_thresholds": {
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 10,
+          "minItems": 10,
+          "title": "Iou Thresholds",
+          "type": "array"
+        },
+        "max_detections_per_image": {
+          "minimum": 1,
+          "title": "Max Detections Per Image",
+          "type": "integer"
+        },
+        "n_images": {
+          "minimum": 1,
+          "title": "N Images",
+          "type": "integer"
+        },
+        "n_images_without_predictions": {
+          "minimum": 0,
+          "title": "N Images Without Predictions",
+          "type": "integer"
+        },
+        "n_predictions_other_classes": {
+          "minimum": 0,
+          "title": "N Predictions Other Classes",
+          "type": "integer"
+        },
+        "per_class": {
+          "items": {
+            "$ref": "#/$defs/ClassEval"
+          },
+          "minItems": 1,
+          "title": "Per Class",
+          "type": "array"
+        },
+        "map50": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Map50"
+        },
+        "map50_95": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Map50 95"
+        }
+      },
+      "required": [
+        "tool_version",
+        "inputs",
+        "split",
+        "iou_thresholds",
+        "max_detections_per_image",
+        "n_images",
+        "n_images_without_predictions",
+        "n_predictions_other_classes",
+        "per_class",
+        "map50",
+        "map50_95"
+      ],
+      "title": "DetectionEvalReport",
+      "type": "object"
+    },
+    "InputFingerprint": {
+      "additionalProperties": false,
+      "description": "Which exact bytes produced a report: the audit trail of every input.\n\nIf someone later asks \"was this mAP computed on the current predictions\nfile?\", the answer is a hash comparison, not a recollection.",
+      "properties": {
+        "role": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Role",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "role",
+        "path",
+        "sha256",
+        "size_bytes"
+      ],
+      "title": "InputFingerprint",
+      "type": "object"
+    },
+    "OperatingPoint": {
+      "additionalProperties": false,
+      "description": "Counts at the confidence threshold the alert rules will actually use (IoU 0.5).",
+      "properties": {
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "tp": {
+          "minimum": 0,
+          "title": "Tp",
+          "type": "integer"
+        },
+        "fp": {
+          "minimum": 0,
+          "title": "Fp",
+          "type": "integer"
+        },
+        "fn": {
+          "minimum": 0,
+          "title": "Fn",
+          "type": "integer"
+        },
+        "precision": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Precision"
+        },
+        "recall": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Recall"
+        },
+        "f1": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "F1"
+        }
+      },
+      "required": [
+        "confidence",
+        "tp",
+        "fp",
+        "fn",
+        "precision",
+        "recall",
+        "f1"
+      ],
+      "title": "OperatingPoint",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract_id": {
+      "const": "QuantParityReport",
+      "default": "QuantParityReport",
+      "title": "Contract Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "tool_version": {
+      "title": "Tool Version",
+      "type": "string"
+    },
+    "reference": {
+      "$ref": "#/$defs/DetectionEvalReport"
+    },
+    "candidate": {
+      "$ref": "#/$defs/DetectionEvalReport"
+    },
+    "delta_map50": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Delta Map50"
+    },
+    "delta_map50_95": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Delta Map50 95"
+    },
+    "box_agreement": {
+      "$ref": "#/$defs/BoxAgreement"
+    },
+    "max_map50_drop": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Max Map50 Drop",
+      "type": "number"
+    },
+    "verdict": {
+      "enum": [
+        "PASS",
+        "WARN",
+        "FAIL"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "required": [
+    "tool_version",
+    "reference",
+    "candidate",
+    "delta_map50",
+    "delta_map50_95",
+    "box_agreement",
+    "max_map50_drop",
+    "verdict"
+  ],
+  "title": "QuantParityReport",
+  "type": "object"
+}

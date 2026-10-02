@@ -1,0 +1,35 @@
+{
+  "additionalProperties": false,
+  "description": "A human-labelled ground-truth event interval for RULE_REPLAY.",
+  "properties": {
+    "camera_id": {
+      "pattern": "^[A-Za-z0-9_.-]{1,64}$",
+      "title": "Camera Id",
+      "type": "string"
+    },
+    "start_ts": {
+      "minimum": 0.0,
+      "title": "Start Ts",
+      "type": "number"
+    },
+    "end_ts": {
+      "minimum": 0.0,
+      "title": "End Ts",
+      "type": "number"
+    },
+    "label": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Label",
+      "type": "string"
+    }
+  },
+  "required": [
+    "camera_id",
+    "start_ts",
+    "end_ts",
+    "label"
+  ],
+  "title": "EventRow",
+  "type": "object"
+}

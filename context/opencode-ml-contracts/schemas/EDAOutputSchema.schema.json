@@ -1,0 +1,653 @@
+{
+  "$defs": {
+    "ClassBalance": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Target",
+          "type": "string"
+        },
+        "n_classes": {
+          "minimum": 2,
+          "title": "N Classes",
+          "type": "integer"
+        },
+        "class_counts": {
+          "additionalProperties": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": "Class Counts",
+          "type": "object"
+        },
+        "majority_class": {
+          "title": "Majority Class",
+          "type": "string"
+        },
+        "minority_class": {
+          "title": "Minority Class",
+          "type": "string"
+        },
+        "imbalance_ratio": {
+          "description": "count(majority) / count(minority)",
+          "minimum": 1.0,
+          "title": "Imbalance Ratio",
+          "type": "number"
+        },
+        "normalized_entropy": {
+          "description": "H(p)/ln(K); 1.0 == perfectly balanced",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Normalized Entropy",
+          "type": "number"
+        },
+        "is_imbalanced": {
+          "title": "Is Imbalanced",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "target",
+        "n_classes",
+        "class_counts",
+        "majority_class",
+        "minority_class",
+        "imbalance_ratio",
+        "normalized_entropy",
+        "is_imbalanced"
+      ],
+      "title": "ClassBalance",
+      "type": "object"
+    },
+    "CleaningAction": {
+      "enum": [
+        "drop_column",
+        "drop_duplicates",
+        "impute_median",
+        "impute_mode",
+        "impute_constant",
+        "add_missing_indicator",
+        "clip_outliers_iqr",
+        "log1p_transform",
+        "cast_dtype",
+        "one_hot_encode",
+        "target_encode",
+        "resample_or_reweight",
+        "investigate_leakage"
+      ],
+      "title": "CleaningAction",
+      "type": "string"
+    },
+    "CleaningStep": {
+      "additionalProperties": false,
+      "properties": {
+        "column": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "null only for dataset-level actions (e.g. drop_duplicates)",
+          "title": "Column"
+        },
+        "action": {
+          "$ref": "#/$defs/CleaningAction"
+        },
+        "priority": {
+          "description": "1 = must do before training",
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Priority",
+          "type": "integer"
+        },
+        "rationale": {
+          "maxLength": 280,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        }
+      },
+      "required": [
+        "column",
+        "action",
+        "priority",
+        "rationale"
+      ],
+      "title": "CleaningStep",
+      "type": "object"
+    },
+    "ColumnProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "semantic_dtype": {
+          "$ref": "#/$defs/SemanticDType"
+        },
+        "physical_dtype": {
+          "title": "Physical Dtype",
+          "type": "string"
+        },
+        "null_count": {
+          "minimum": 0,
+          "title": "Null Count",
+          "type": "integer"
+        },
+        "null_ratio": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Null Ratio",
+          "type": "number"
+        },
+        "n_unique": {
+          "minimum": 0,
+          "title": "N Unique",
+          "type": "integer"
+        },
+        "is_constant": {
+          "title": "Is Constant",
+          "type": "boolean"
+        },
+        "is_high_cardinality": {
+          "title": "Is High Cardinality",
+          "type": "boolean"
+        },
+        "numeric": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NumericSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "semantic_dtype",
+        "physical_dtype",
+        "null_count",
+        "null_ratio",
+        "n_unique",
+        "is_constant",
+        "is_high_cardinality",
+        "numeric"
+      ],
+      "title": "ColumnProfile",
+      "type": "object"
+    },
+    "CorrelationKind": {
+      "enum": [
+        "multicollinearity",
+        "target_signal",
+        "leakage_suspect"
+      ],
+      "title": "CorrelationKind",
+      "type": "string"
+    },
+    "CorrelationPair": {
+      "additionalProperties": false,
+      "properties": {
+        "feature_a": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Feature A",
+          "type": "string"
+        },
+        "feature_b": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Feature B",
+          "type": "string"
+        },
+        "method": {
+          "enum": [
+            "pearson",
+            "spearman"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "coefficient": {
+          "maximum": 1.0,
+          "minimum": -1.0,
+          "title": "Coefficient",
+          "type": "number"
+        },
+        "kind": {
+          "$ref": "#/$defs/CorrelationKind"
+        }
+      },
+      "required": [
+        "feature_a",
+        "feature_b",
+        "method",
+        "coefficient",
+        "kind"
+      ],
+      "title": "CorrelationPair",
+      "type": "object"
+    },
+    "DataSource": {
+      "additionalProperties": false,
+      "properties": {
+        "uri": {
+          "title": "Uri",
+          "type": "string"
+        },
+        "format": {
+          "enum": [
+            "csv",
+            "parquet",
+            "dataframe"
+          ],
+          "title": "Format",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "sampled": {
+          "title": "Sampled",
+          "type": "boolean"
+        },
+        "sample_rows": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Sample Rows"
+        }
+      },
+      "required": [
+        "uri",
+        "format",
+        "sha256",
+        "sampled",
+        "sample_rows"
+      ],
+      "title": "DataSource",
+      "type": "object"
+    },
+    "DatasetShape": {
+      "additionalProperties": false,
+      "properties": {
+        "n_rows": {
+          "minimum": 0,
+          "title": "N Rows",
+          "type": "integer"
+        },
+        "n_cols": {
+          "minimum": 1,
+          "title": "N Cols",
+          "type": "integer"
+        },
+        "duplicate_rows": {
+          "minimum": 0,
+          "title": "Duplicate Rows",
+          "type": "integer"
+        },
+        "memory_mb": {
+          "minimum": 0.0,
+          "title": "Memory Mb",
+          "type": "number"
+        }
+      },
+      "required": [
+        "n_rows",
+        "n_cols",
+        "duplicate_rows",
+        "memory_mb"
+      ],
+      "title": "DatasetShape",
+      "type": "object"
+    },
+    "DriftReport": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline": {
+          "enum": [
+            "reference_dataset",
+            "temporal_split"
+          ],
+          "title": "Baseline",
+          "type": "string"
+        },
+        "baseline_description": {
+          "maxLength": 280,
+          "minLength": 1,
+          "title": "Baseline Description",
+          "type": "string"
+        },
+        "features": {
+          "items": {
+            "$ref": "#/$defs/FeatureDrift"
+          },
+          "title": "Features",
+          "type": "array"
+        },
+        "drifted_features": {
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Drifted Features",
+          "type": "array"
+        }
+      },
+      "required": [
+        "baseline",
+        "baseline_description",
+        "features",
+        "drifted_features"
+      ],
+      "title": "DriftReport",
+      "type": "object"
+    },
+    "DriftSeverity": {
+      "enum": [
+        "none",
+        "moderate",
+        "severe"
+      ],
+      "title": "DriftSeverity",
+      "type": "string"
+    },
+    "EDAInsights": {
+      "additionalProperties": false,
+      "properties": {
+        "risk_flags": {
+          "items": {
+            "$ref": "#/$defs/RiskFlag"
+          },
+          "maxItems": 8,
+          "title": "Risk Flags",
+          "type": "array"
+        },
+        "cleaning_plan": {
+          "items": {
+            "$ref": "#/$defs/CleaningStep"
+          },
+          "maxItems": 40,
+          "title": "Cleaning Plan",
+          "type": "array"
+        },
+        "modeling_notes": {
+          "items": {
+            "maxLength": 280,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 5,
+          "title": "Modeling Notes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "risk_flags",
+        "cleaning_plan",
+        "modeling_notes"
+      ],
+      "title": "EDAInsights",
+      "type": "object"
+    },
+    "FeatureDrift": {
+      "additionalProperties": false,
+      "properties": {
+        "feature": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Feature",
+          "type": "string"
+        },
+        "psi": {
+          "description": "Population Stability Index: sum((a-e)*ln(a/e)).",
+          "minimum": 0.0,
+          "title": "Psi",
+          "type": "number"
+        },
+        "ks_statistic": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Two-sample KS D (numeric features only).",
+          "title": "Ks Statistic"
+        },
+        "ks_p_value": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ks P Value"
+        },
+        "severity": {
+          "$ref": "#/$defs/DriftSeverity"
+        }
+      },
+      "required": [
+        "feature",
+        "psi",
+        "ks_statistic",
+        "ks_p_value",
+        "severity"
+      ],
+      "title": "FeatureDrift",
+      "type": "object"
+    },
+    "NumericSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "mean": {
+          "title": "Mean",
+          "type": "number"
+        },
+        "std": {
+          "minimum": 0.0,
+          "title": "Std",
+          "type": "number"
+        },
+        "min": {
+          "title": "Min",
+          "type": "number"
+        },
+        "q25": {
+          "title": "Q25",
+          "type": "number"
+        },
+        "median": {
+          "title": "Median",
+          "type": "number"
+        },
+        "q75": {
+          "title": "Q75",
+          "type": "number"
+        },
+        "max": {
+          "title": "Max",
+          "type": "number"
+        },
+        "skewness": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Skewness"
+        },
+        "outlier_ratio_iqr": {
+          "description": "Share of rows outside [Q1-1.5*IQR, Q3+1.5*IQR].",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Outlier Ratio Iqr",
+          "type": "number"
+        }
+      },
+      "required": [
+        "mean",
+        "std",
+        "min",
+        "q25",
+        "median",
+        "q75",
+        "max",
+        "skewness",
+        "outlier_ratio_iqr"
+      ],
+      "title": "NumericSummary",
+      "type": "object"
+    },
+    "RiskFlag": {
+      "enum": [
+        "data_leakage",
+        "class_imbalance",
+        "covariate_drift",
+        "high_missingness",
+        "multicollinearity",
+        "duplicates",
+        "constant_features",
+        "small_sample"
+      ],
+      "title": "RiskFlag",
+      "type": "string"
+    },
+    "SemanticDType": {
+      "enum": [
+        "integer",
+        "float",
+        "boolean",
+        "categorical",
+        "text",
+        "datetime",
+        "other"
+      ],
+      "title": "SemanticDType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "source": {
+      "$ref": "#/$defs/DataSource"
+    },
+    "shape": {
+      "$ref": "#/$defs/DatasetShape"
+    },
+    "columns": {
+      "items": {
+        "$ref": "#/$defs/ColumnProfile"
+      },
+      "minItems": 1,
+      "title": "Columns",
+      "type": "array"
+    },
+    "total_null_cells": {
+      "minimum": 0,
+      "title": "Total Null Cells",
+      "type": "integer"
+    },
+    "target": {
+      "anyOf": [
+        {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Target"
+    },
+    "class_balance": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ClassBalance"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "drift": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DriftReport"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "critical_correlations": {
+      "items": {
+        "$ref": "#/$defs/CorrelationPair"
+      },
+      "title": "Critical Correlations",
+      "type": "array"
+    },
+    "contract_id": {
+      "const": "EDAOutputSchema",
+      "default": "EDAOutputSchema",
+      "title": "Contract Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "insights": {
+      "$ref": "#/$defs/EDAInsights"
+    }
+  },
+  "required": [
+    "source",
+    "shape",
+    "columns",
+    "total_null_cells",
+    "target",
+    "class_balance",
+    "drift",
+    "critical_correlations",
+    "insights"
+  ],
+  "title": "EDAOutputSchema",
+  "type": "object"
+}

@@ -1,0 +1,389 @@
+{
+  "$defs": {
+    "Alert": {
+      "additionalProperties": false,
+      "properties": {
+        "camera_id": {
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+          "title": "Camera Id",
+          "type": "string"
+        },
+        "ts": {
+          "minimum": 0.0,
+          "title": "Ts",
+          "type": "number"
+        },
+        "frame_index": {
+          "minimum": 0,
+          "title": "Frame Index",
+          "type": "integer"
+        },
+        "streak": {
+          "minimum": 1,
+          "title": "Streak",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "camera_id",
+        "ts",
+        "frame_index",
+        "streak"
+      ],
+      "title": "Alert",
+      "type": "object"
+    },
+    "CameraAlerts": {
+      "additionalProperties": false,
+      "properties": {
+        "camera_id": {
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+          "title": "Camera Id",
+          "type": "string"
+        },
+        "n_alerts": {
+          "minimum": 0,
+          "title": "N Alerts",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "camera_id",
+        "n_alerts"
+      ],
+      "title": "CameraAlerts",
+      "type": "object"
+    },
+    "EventMatching": {
+      "additionalProperties": false,
+      "description": "Comparison with human-annotated events (only when they were supplied).\n\nAn event counts as detected when some alert on the same camera fires in\n``[start_ts, end_ts + match_tolerance_s]``; latency is that first alert's\n``ts - start_ts`` and is therefore >= 0 by construction.",
+      "properties": {
+        "n_events": {
+          "minimum": 0,
+          "title": "N Events",
+          "type": "integer"
+        },
+        "n_detected": {
+          "minimum": 0,
+          "title": "N Detected",
+          "type": "integer"
+        },
+        "event_recall": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Event Recall"
+        },
+        "n_alerts_inside_events": {
+          "minimum": 0,
+          "title": "N Alerts Inside Events",
+          "type": "integer"
+        },
+        "alert_precision": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Alert Precision"
+        },
+        "latency_s_p50": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Latency S P50"
+        },
+        "latency_s_p90": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Latency S P90"
+        },
+        "latency_s_max": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Latency S Max"
+        }
+      },
+      "required": [
+        "n_events",
+        "n_detected",
+        "event_recall",
+        "n_alerts_inside_events",
+        "alert_precision",
+        "latency_s_p50",
+        "latency_s_p90",
+        "latency_s_max"
+      ],
+      "title": "EventMatching",
+      "type": "object"
+    },
+    "EventPolicy": {
+      "additionalProperties": false,
+      "description": "One candidate alert rule to replay. Units are in the field names.",
+      "properties": {
+        "name": {
+          "pattern": "^[A-Za-z0-9_.-]{1,64}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "classes": {
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Classes",
+          "type": "array"
+        },
+        "min_confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Min Confidence",
+          "type": "number"
+        },
+        "min_consecutive_frames": {
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Min Consecutive Frames",
+          "type": "integer"
+        },
+        "cooldown_s": {
+          "maximum": 86400.0,
+          "minimum": 0.0,
+          "title": "Cooldown S",
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "classes",
+        "min_confidence",
+        "min_consecutive_frames",
+        "cooldown_s"
+      ],
+      "title": "EventPolicy",
+      "type": "object"
+    },
+    "InputFingerprint": {
+      "additionalProperties": false,
+      "description": "Which exact bytes produced a report: the audit trail of every input.\n\nIf someone later asks \"was this mAP computed on the current predictions\nfile?\", the answer is a hash comparison, not a recollection.",
+      "properties": {
+        "role": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Role",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "role",
+        "path",
+        "sha256",
+        "size_bytes"
+      ],
+      "title": "InputFingerprint",
+      "type": "object"
+    },
+    "PolicyResult": {
+      "additionalProperties": false,
+      "properties": {
+        "policy": {
+          "$ref": "#/$defs/EventPolicy"
+        },
+        "n_alerts": {
+          "minimum": 0,
+          "title": "N Alerts",
+          "type": "integer"
+        },
+        "alerts_per_hour": {
+          "minimum": 0.0,
+          "title": "Alerts Per Hour",
+          "type": "number"
+        },
+        "per_camera": {
+          "items": {
+            "$ref": "#/$defs/CameraAlerts"
+          },
+          "title": "Per Camera",
+          "type": "array"
+        },
+        "alerts": {
+          "items": {
+            "$ref": "#/$defs/Alert"
+          },
+          "maxItems": 500,
+          "title": "Alerts",
+          "type": "array"
+        },
+        "alerts_truncated": {
+          "title": "Alerts Truncated",
+          "type": "boolean"
+        },
+        "events": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EventMatching"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "policy",
+        "n_alerts",
+        "alerts_per_hour",
+        "per_camera",
+        "alerts",
+        "alerts_truncated",
+        "events"
+      ],
+      "title": "PolicyResult",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract_id": {
+      "const": "RuleReplayReport",
+      "default": "RuleReplayReport",
+      "title": "Contract Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "tool_version": {
+      "title": "Tool Version",
+      "type": "string"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/InputFingerprint"
+      },
+      "title": "Inputs",
+      "type": "array"
+    },
+    "n_frames": {
+      "minimum": 2,
+      "title": "N Frames",
+      "type": "integer"
+    },
+    "cameras": {
+      "items": {
+        "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Cameras",
+      "type": "array"
+    },
+    "covered_hours": {
+      "exclusiveMinimum": 0.0,
+      "title": "Covered Hours",
+      "type": "number"
+    },
+    "n_frame_gaps": {
+      "minimum": 0,
+      "title": "N Frame Gaps",
+      "type": "integer"
+    },
+    "max_frame_gap_s": {
+      "exclusiveMinimum": 0.0,
+      "title": "Max Frame Gap S",
+      "type": "number"
+    },
+    "match_tolerance_s": {
+      "minimum": 0.0,
+      "title": "Match Tolerance S",
+      "type": "number"
+    },
+    "reference_implementation": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Reference Implementation",
+      "type": "string"
+    },
+    "ground_truth_available": {
+      "title": "Ground Truth Available",
+      "type": "boolean"
+    },
+    "results": {
+      "items": {
+        "$ref": "#/$defs/PolicyResult"
+      },
+      "minItems": 1,
+      "title": "Results",
+      "type": "array"
+    }
+  },
+  "required": [
+    "tool_version",
+    "inputs",
+    "n_frames",
+    "cameras",
+    "covered_hours",
+    "n_frame_gaps",
+    "max_frame_gap_s",
+    "match_tolerance_s",
+    "reference_implementation",
+    "ground_truth_available",
+    "results"
+  ],
+  "title": "RuleReplayReport",
+  "type": "object"
+}

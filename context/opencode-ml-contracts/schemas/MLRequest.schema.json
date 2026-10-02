@@ -1,0 +1,131 @@
+{
+  "$defs": {
+    "TaskType": {
+      "description": "Explicit task space accepted by the OpenCode adapter.",
+      "enum": [
+        "EDA",
+        "TRAINING",
+        "CODE_REVIEW",
+        "RAW_QUERY"
+      ],
+      "title": "TaskType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Task supplied explicitly by the caller; no probabilistic classifier.",
+  "properties": {
+    "task": {
+      "$ref": "#/$defs/TaskType"
+    },
+    "path": {
+      "anyOf": [
+        {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Path"
+    },
+    "target": {
+      "anyOf": [
+        {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Target"
+    },
+    "reference": {
+      "anyOf": [
+        {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reference"
+    },
+    "time_column": {
+      "anyOf": [
+        {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Time Column"
+    },
+    "drop_columns": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 256,
+      "title": "Drop Columns",
+      "type": "array"
+    },
+    "query": {
+      "anyOf": [
+        {
+          "maxLength": 16000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Query"
+    },
+    "offline": {
+      "default": true,
+      "title": "Offline",
+      "type": "boolean"
+    },
+    "seed": {
+      "default": 42,
+      "maximum": 4294967295,
+      "minimum": 0,
+      "title": "Seed",
+      "type": "integer"
+    },
+    "max_rows": {
+      "default": 200000,
+      "maximum": 1000000,
+      "minimum": 1,
+      "title": "Max Rows",
+      "type": "integer"
+    },
+    "max_iterations": {
+      "default": 3,
+      "maximum": 5,
+      "minimum": 1,
+      "title": "Max Iterations",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "task"
+  ],
+  "title": "MLRequest",
+  "type": "object"
+}

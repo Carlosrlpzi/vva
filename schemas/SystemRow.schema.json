@@ -1,0 +1,37 @@
+{
+  "additionalProperties": false,
+  "description": "Periodic system sample (e.g. every 5 s) for thermal analysis.",
+  "properties": {
+    "ts": {
+      "minimum": 0.0,
+      "title": "Ts",
+      "type": "number"
+    },
+    "cpu_temp_c": {
+      "maximum": 150.0,
+      "minimum": -40.0,
+      "title": "Cpu Temp C",
+      "type": "number"
+    },
+    "cpu_percent": {
+      "anyOf": [
+        {
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cpu Percent"
+    }
+  },
+  "required": [
+    "ts",
+    "cpu_temp_c"
+  ],
+  "title": "SystemRow",
+  "type": "object"
+}

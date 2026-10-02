@@ -1,0 +1,51 @@
+{
+  "additionalProperties": false,
+  "description": "One detector output for DETECTION_EVAL / QUANT_PARITY.\n\n``image`` is the image key: its path relative to the split's image\ndirectory, without extension (e.g. ``\"cam1_20261001_000123\"``).",
+  "properties": {
+    "image": {
+      "maxLength": 1024,
+      "minLength": 1,
+      "title": "Image",
+      "type": "string"
+    },
+    "class_id": {
+      "minimum": 0,
+      "title": "Class Id",
+      "type": "integer"
+    },
+    "confidence": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "box": {
+      "maxItems": 4,
+      "minItems": 4,
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "title": "Box",
+      "type": "array"
+    }
+  },
+  "required": [
+    "image",
+    "class_id",
+    "confidence",
+    "box"
+  ],
+  "title": "PredictionRow",
+  "type": "object"
+}

@@ -1,0 +1,593 @@
+{
+  "$defs": {
+    "Algorithm": {
+      "enum": [
+        "logistic_regression",
+        "ridge",
+        "random_forest",
+        "hist_gradient_boosting"
+      ],
+      "title": "Algorithm",
+      "type": "string"
+    },
+    "ClassificationMetrics": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "classification",
+          "default": "classification",
+          "title": "Kind",
+          "type": "string"
+        },
+        "n_validation_samples": {
+          "minimum": 1,
+          "title": "N Validation Samples",
+          "type": "integer"
+        },
+        "roc_auc": {
+          "description": "Binary: AUC of positive class. Multiclass: macro one-vs-rest.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Roc Auc",
+          "type": "number"
+        },
+        "f1_macro": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "F1 Macro",
+          "type": "number"
+        },
+        "f1_weighted": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "F1 Weighted",
+          "type": "number"
+        },
+        "precision_macro": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Precision Macro",
+          "type": "number"
+        },
+        "recall_macro": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Recall Macro",
+          "type": "number"
+        },
+        "accuracy": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Accuracy",
+          "type": "number"
+        },
+        "log_loss": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Log Loss"
+        },
+        "confusion_matrix": {
+          "$ref": "#/$defs/ConfusionMatrix"
+        }
+      },
+      "required": [
+        "n_validation_samples",
+        "roc_auc",
+        "f1_macro",
+        "f1_weighted",
+        "precision_macro",
+        "recall_macro",
+        "accuracy",
+        "log_loss",
+        "confusion_matrix"
+      ],
+      "title": "ClassificationMetrics",
+      "type": "object"
+    },
+    "ConfusionMatrix": {
+      "additionalProperties": false,
+      "properties": {
+        "labels": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2,
+          "title": "Labels",
+          "type": "array"
+        },
+        "matrix": {
+          "description": "Rows = true label, columns = predicted label.",
+          "items": {
+            "items": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "title": "Matrix",
+          "type": "array"
+        }
+      },
+      "required": [
+        "labels",
+        "matrix"
+      ],
+      "title": "ConfusionMatrix",
+      "type": "object"
+    },
+    "CrossValidationSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "metric": {
+          "$ref": "#/$defs/MetricName"
+        },
+        "n_folds": {
+          "minimum": 2,
+          "title": "N Folds",
+          "type": "integer"
+        },
+        "fold_scores": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Fold Scores",
+          "type": "array"
+        },
+        "mean": {
+          "title": "Mean",
+          "type": "number"
+        },
+        "std": {
+          "minimum": 0.0,
+          "title": "Std",
+          "type": "number"
+        }
+      },
+      "required": [
+        "metric",
+        "n_folds",
+        "fold_scores",
+        "mean",
+        "std"
+      ],
+      "title": "CrossValidationSummary",
+      "type": "object"
+    },
+    "HyperparameterAssignment": {
+      "additionalProperties": false,
+      "description": "List-of-pairs instead of dict: strict JSON-schema mode forbids open-ended object keys.",
+      "properties": {
+        "name": {
+          "maxLength": 128,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "title": "HyperparameterAssignment",
+      "type": "object"
+    },
+    "MetricName": {
+      "enum": [
+        "roc_auc",
+        "f1_macro",
+        "rmse",
+        "mae",
+        "r2"
+      ],
+      "title": "MetricName",
+      "type": "string"
+    },
+    "ProblemType": {
+      "enum": [
+        "binary_classification",
+        "multiclass_classification",
+        "regression"
+      ],
+      "title": "ProblemType",
+      "type": "string"
+    },
+    "RegressionMetrics": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "regression",
+          "default": "regression",
+          "title": "Kind",
+          "type": "string"
+        },
+        "n_validation_samples": {
+          "minimum": 1,
+          "title": "N Validation Samples",
+          "type": "integer"
+        },
+        "rmse": {
+          "minimum": 0.0,
+          "title": "Rmse",
+          "type": "number"
+        },
+        "mae": {
+          "minimum": 0.0,
+          "title": "Mae",
+          "type": "number"
+        },
+        "r2": {
+          "maximum": 1.0,
+          "title": "R2",
+          "type": "number"
+        }
+      },
+      "required": [
+        "n_validation_samples",
+        "rmse",
+        "mae",
+        "r2"
+      ],
+      "title": "RegressionMetrics",
+      "type": "object"
+    },
+    "ReproducibilitySpec": {
+      "additionalProperties": false,
+      "properties": {
+        "random_seed": {
+          "minimum": 0,
+          "title": "Random Seed",
+          "type": "integer"
+        },
+        "data_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Data Sha256",
+          "type": "string"
+        },
+        "training_script_path": {
+          "title": "Training Script Path",
+          "type": "string"
+        },
+        "training_script_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Training Script Sha256",
+          "type": "string"
+        },
+        "target": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Target",
+          "type": "string"
+        },
+        "feature_columns": {
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Feature Columns",
+          "type": "array"
+        },
+        "numeric_features": {
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Numeric Features",
+          "type": "array"
+        },
+        "categorical_features": {
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Categorical Features",
+          "type": "array"
+        },
+        "split_strategy": {
+          "enum": [
+            "stratified_holdout",
+            "holdout"
+          ],
+          "title": "Split Strategy",
+          "type": "string"
+        },
+        "test_size": {
+          "exclusiveMaximum": 1.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Test Size",
+          "type": "number"
+        },
+        "python_version": {
+          "title": "Python Version",
+          "type": "string"
+        },
+        "library_versions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Library Versions",
+          "type": "object"
+        }
+      },
+      "required": [
+        "random_seed",
+        "data_sha256",
+        "training_script_path",
+        "training_script_sha256",
+        "target",
+        "feature_columns",
+        "numeric_features",
+        "categorical_features",
+        "split_strategy",
+        "test_size",
+        "python_version",
+        "library_versions"
+      ],
+      "title": "ReproducibilitySpec",
+      "type": "object"
+    },
+    "SerializationSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "enum": [
+            "onnx",
+            "joblib"
+          ],
+          "title": "Format",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size_bytes": {
+          "minimum": 1,
+          "title": "Size Bytes",
+          "type": "integer"
+        },
+        "onnx_opset": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Onnx Opset"
+        },
+        "onnx_parity_max_abs_diff": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "max |p_sklearn - p_onnx| on the validation set; proves the export is faithful.",
+          "title": "Onnx Parity Max Abs Diff"
+        }
+      },
+      "required": [
+        "format",
+        "path",
+        "sha256",
+        "size_bytes",
+        "onnx_opset",
+        "onnx_parity_max_abs_diff"
+      ],
+      "title": "SerializationSpec",
+      "type": "object"
+    },
+    "TrainingPlan": {
+      "additionalProperties": false,
+      "description": "Decision surface for DeepSeek. Validated again against the concrete estimator's get_params().",
+      "properties": {
+        "algorithm": {
+          "$ref": "#/$defs/Algorithm"
+        },
+        "hyperparameters": {
+          "items": {
+            "$ref": "#/$defs/HyperparameterAssignment"
+          },
+          "maxItems": 20,
+          "title": "Hyperparameters",
+          "type": "array"
+        },
+        "primary_metric": {
+          "$ref": "#/$defs/MetricName"
+        },
+        "cv_folds": {
+          "maximum": 10,
+          "minimum": 3,
+          "title": "Cv Folds",
+          "type": "integer"
+        },
+        "test_size": {
+          "maximum": 0.4,
+          "minimum": 0.1,
+          "title": "Test Size",
+          "type": "number"
+        },
+        "handle_imbalance": {
+          "enum": [
+            "none",
+            "class_weight_balanced"
+          ],
+          "title": "Handle Imbalance",
+          "type": "string"
+        },
+        "serialization": {
+          "enum": [
+            "onnx",
+            "joblib"
+          ],
+          "title": "Serialization",
+          "type": "string"
+        },
+        "rationale": {
+          "maxLength": 280,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        }
+      },
+      "required": [
+        "algorithm",
+        "hyperparameters",
+        "primary_metric",
+        "cv_folds",
+        "test_size",
+        "handle_imbalance",
+        "serialization",
+        "rationale"
+      ],
+      "title": "TrainingPlan",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract_id": {
+      "const": "ModelArtifactSpec",
+      "default": "ModelArtifactSpec",
+      "title": "Contract Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "experiment_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "problem_type": {
+      "$ref": "#/$defs/ProblemType"
+    },
+    "algorithm": {
+      "$ref": "#/$defs/Algorithm"
+    },
+    "estimator_class": {
+      "pattern": "^sklearn\\.[\\w.]+\\.[A-Z]\\w+$",
+      "title": "Estimator Class",
+      "type": "string"
+    },
+    "hyperparameters": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "description": "Fully-resolved estimator.get_params(deep=False).",
+      "title": "Hyperparameters",
+      "type": "object"
+    },
+    "plan": {
+      "$ref": "#/$defs/TrainingPlan"
+    },
+    "cross_validation": {
+      "$ref": "#/$defs/CrossValidationSummary"
+    },
+    "validation": {
+      "discriminator": {
+        "mapping": {
+          "classification": "#/$defs/ClassificationMetrics",
+          "regression": "#/$defs/RegressionMetrics"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ClassificationMetrics"
+        },
+        {
+          "$ref": "#/$defs/RegressionMetrics"
+        }
+      ],
+      "title": "Validation"
+    },
+    "serialization": {
+      "$ref": "#/$defs/SerializationSpec"
+    },
+    "reproducibility": {
+      "$ref": "#/$defs/ReproducibilitySpec"
+    }
+  },
+  "required": [
+    "experiment_id",
+    "created_at",
+    "problem_type",
+    "algorithm",
+    "estimator_class",
+    "hyperparameters",
+    "plan",
+    "cross_validation",
+    "validation",
+    "serialization",
+    "reproducibility"
+  ],
+  "title": "ModelArtifactSpec",
+  "type": "object"
+}

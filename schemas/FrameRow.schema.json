@@ -1,0 +1,83 @@
+{
+  "$defs": {
+    "DetectionRow": {
+      "additionalProperties": false,
+      "description": "One detection inside a frame log line (always xyxyn).",
+      "properties": {
+        "class_name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Class Name",
+          "type": "string"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "box": {
+          "maxItems": 4,
+          "minItems": 4,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Box",
+          "type": "array"
+        }
+      },
+      "required": [
+        "class_name",
+        "confidence",
+        "box"
+      ],
+      "title": "DetectionRow",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One processed frame. Frames WITHOUT detections must be logged too.\n\nAn empty ``detections`` list is what breaks a streak in the state machine;\na log that only records positive frames would make every streak look\nunbroken and the replay would overstate alerts.",
+  "properties": {
+    "camera_id": {
+      "pattern": "^[A-Za-z0-9_.-]{1,64}$",
+      "title": "Camera Id",
+      "type": "string"
+    },
+    "frame_idx": {
+      "minimum": 0,
+      "title": "Frame Idx",
+      "type": "integer"
+    },
+    "ts": {
+      "minimum": 0.0,
+      "title": "Ts",
+      "type": "number"
+    },
+    "detections": {
+      "items": {
+        "$ref": "#/$defs/DetectionRow"
+      },
+      "title": "Detections",
+      "type": "array"
+    }
+  },
+  "required": [
+    "camera_id",
+    "frame_idx",
+    "ts",
+    "detections"
+  ],
+  "title": "FrameRow",
+  "type": "object"
+}

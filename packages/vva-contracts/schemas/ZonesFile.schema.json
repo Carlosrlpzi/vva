@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "Zone": {
+      "additionalProperties": false,
+      "description": "A named polygon in normalized coordinates.",
+      "properties": {
+        "name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "polygon": {
+          "items": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "maxItems": 64,
+          "minItems": 3,
+          "title": "Polygon",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "polygon"
+      ],
+      "title": "Zone",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Content of ``configs/zones.json``: zones per camera.",
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "cameras": {
+      "patternProperties": {
+        "^[a-z0-9][a-z0-9_-]{0,63}$": {
+          "items": {
+            "$ref": "#/$defs/Zone"
+          },
+          "type": "array"
+        }
+      },
+      "title": "Cameras",
+      "type": "object"
+    }
+  },
+  "required": [
+    "cameras"
+  ],
+  "title": "ZonesFile",
+  "type": "object"
+}

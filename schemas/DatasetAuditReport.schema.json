@@ -1,0 +1,461 @@
+{
+  "$defs": {
+    "BoxSizeSummary": {
+      "additionalProperties": false,
+      "description": "Distribution of box sizes in letterboxed inference pixels.",
+      "properties": {
+        "n_boxes": {
+          "minimum": 0,
+          "title": "N Boxes",
+          "type": "integer"
+        },
+        "frac_small": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Frac Small",
+          "type": "number"
+        },
+        "frac_medium": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Frac Medium",
+          "type": "number"
+        },
+        "frac_large": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Frac Large",
+          "type": "number"
+        },
+        "short_side_px_p05": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Short Side Px P05"
+        },
+        "short_side_px_p50": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Short Side Px P50"
+        },
+        "short_side_px_p95": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Short Side Px P95"
+        }
+      },
+      "required": [
+        "n_boxes",
+        "frac_small",
+        "frac_medium",
+        "frac_large",
+        "short_side_px_p05",
+        "short_side_px_p50",
+        "short_side_px_p95"
+      ],
+      "title": "BoxSizeSummary",
+      "type": "object"
+    },
+    "InputFingerprint": {
+      "additionalProperties": false,
+      "description": "Provenance of one input: which file, in which role, with which bytes.",
+      "properties": {
+        "role": {
+          "pattern": "^[A-Za-z0-9_.-]{1,64}$",
+          "title": "Role",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "path",
+        "sha256"
+      ],
+      "title": "InputFingerprint",
+      "type": "object"
+    },
+    "IssueExample": {
+      "additionalProperties": false,
+      "description": "One concrete label problem, so a human can open the file and look.",
+      "properties": {
+        "file": {
+          "title": "File",
+          "type": "string"
+        },
+        "line": {
+          "minimum": 0,
+          "title": "Line",
+          "type": "integer"
+        },
+        "kind": {
+          "enum": [
+            "malformed_line",
+            "class_out_of_range",
+            "coord_out_of_range",
+            "zero_area",
+            "box_exceeds_image"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file",
+        "line",
+        "kind",
+        "detail"
+      ],
+      "title": "IssueExample",
+      "type": "object"
+    },
+    "LeakageSummary": {
+      "additionalProperties": false,
+      "description": "Evidence of train/validation contamination.",
+      "properties": {
+        "near_duplicate_pairs": {
+          "minimum": 0,
+          "title": "Near Duplicate Pairs",
+          "type": "integer"
+        },
+        "near_duplicate_examples": {
+          "items": {
+            "$ref": "#/$defs/NearDuplicatePair"
+          },
+          "title": "Near Duplicate Examples",
+          "type": "array"
+        },
+        "group_pattern": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Group Pattern"
+        },
+        "n_groups_spanning_splits": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "N Groups Spanning Splits"
+        },
+        "group_examples": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Group Examples",
+          "type": "array"
+        },
+        "n_images_unmatched_pattern": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "N Images Unmatched Pattern"
+        }
+      },
+      "required": [
+        "near_duplicate_pairs",
+        "near_duplicate_examples",
+        "group_pattern",
+        "n_groups_spanning_splits",
+        "group_examples",
+        "n_images_unmatched_pattern"
+      ],
+      "title": "LeakageSummary",
+      "type": "object"
+    },
+    "NearDuplicatePair": {
+      "additionalProperties": false,
+      "description": "Two visually near-identical images found in different splits.",
+      "properties": {
+        "split_a": {
+          "title": "Split A",
+          "type": "string"
+        },
+        "image_a": {
+          "title": "Image A",
+          "type": "string"
+        },
+        "split_b": {
+          "title": "Split B",
+          "type": "string"
+        },
+        "image_b": {
+          "title": "Image B",
+          "type": "string"
+        },
+        "hamming": {
+          "minimum": 0,
+          "title": "Hamming",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "split_a",
+        "image_a",
+        "split_b",
+        "image_b",
+        "hamming"
+      ],
+      "title": "NearDuplicatePair",
+      "type": "object"
+    },
+    "ReportMeta": {
+      "additionalProperties": false,
+      "description": "Header present in every report (who produced it, from what, when).",
+      "properties": {
+        "tool_version": {
+          "title": "Tool Version",
+          "type": "string"
+        },
+        "generated_at": {
+          "format": "date-time",
+          "title": "Generated At",
+          "type": "string"
+        },
+        "inputs": {
+          "items": {
+            "$ref": "#/$defs/InputFingerprint"
+          },
+          "title": "Inputs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "tool_version",
+        "generated_at",
+        "inputs"
+      ],
+      "title": "ReportMeta",
+      "type": "object"
+    },
+    "SplitAudit": {
+      "additionalProperties": false,
+      "description": "Counts for one split. Only *valid* boxes are counted in class_counts.",
+      "properties": {
+        "split": {
+          "title": "Split",
+          "type": "string"
+        },
+        "n_images": {
+          "minimum": 0,
+          "title": "N Images",
+          "type": "integer"
+        },
+        "n_label_files": {
+          "minimum": 0,
+          "title": "N Label Files",
+          "type": "integer"
+        },
+        "n_background_images": {
+          "minimum": 0,
+          "title": "N Background Images",
+          "type": "integer"
+        },
+        "n_orphan_labels": {
+          "minimum": 0,
+          "title": "N Orphan Labels",
+          "type": "integer"
+        },
+        "n_boxes": {
+          "minimum": 0,
+          "title": "N Boxes",
+          "type": "integer"
+        },
+        "class_counts": {
+          "additionalProperties": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": "Class Counts",
+          "type": "object"
+        },
+        "issue_counts": {
+          "additionalProperties": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "propertyNames": {
+            "enum": [
+              "malformed_line",
+              "class_out_of_range",
+              "coord_out_of_range",
+              "zero_area",
+              "box_exceeds_image"
+            ]
+          },
+          "title": "Issue Counts",
+          "type": "object"
+        },
+        "box_sizes": {
+          "$ref": "#/$defs/BoxSizeSummary"
+        }
+      },
+      "required": [
+        "split",
+        "n_images",
+        "n_label_files",
+        "n_background_images",
+        "n_orphan_labels",
+        "n_boxes",
+        "class_counts",
+        "issue_counts",
+        "box_sizes"
+      ],
+      "title": "SplitAudit",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Accepted DATASET_AUDIT artifact.",
+  "properties": {
+    "contract_id": {
+      "const": "DatasetAuditReport",
+      "default": "DatasetAuditReport",
+      "title": "Contract Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "meta": {
+      "$ref": "#/$defs/ReportMeta"
+    },
+    "class_names": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Class Names",
+      "type": "array"
+    },
+    "inference_size": {
+      "maxItems": 2,
+      "minItems": 2,
+      "prefixItems": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "title": "Inference Size",
+      "type": "array"
+    },
+    "near_duplicate_max_hamming": {
+      "minimum": 0,
+      "title": "Near Duplicate Max Hamming",
+      "type": "integer"
+    },
+    "splits": {
+      "items": {
+        "$ref": "#/$defs/SplitAudit"
+      },
+      "minItems": 1,
+      "title": "Splits",
+      "type": "array"
+    },
+    "leakage": {
+      "$ref": "#/$defs/LeakageSummary"
+    },
+    "issue_examples": {
+      "items": {
+        "$ref": "#/$defs/IssueExample"
+      },
+      "title": "Issue Examples",
+      "type": "array"
+    },
+    "flags": {
+      "items": {
+        "enum": [
+          "label_errors",
+          "cross_split_near_duplicates",
+          "group_leakage",
+          "orphan_labels",
+          "class_missing_in_split",
+          "severe_class_imbalance",
+          "many_small_objects",
+          "unmatched_group_pattern"
+        ],
+        "type": "string"
+      },
+      "title": "Flags",
+      "type": "array"
+    },
+    "verdict": {
+      "enum": [
+        "PASS",
+        "WARN",
+        "FAIL"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "required": [
+    "meta",
+    "class_names",
+    "inference_size",
+    "near_duplicate_max_hamming",
+    "splits",
+    "leakage",
+    "issue_examples",
+    "flags",
+    "verdict"
+  ],
+  "title": "DatasetAuditReport",
+  "type": "object"
+}

@@ -1,0 +1,461 @@
+{
+  "$defs": {
+    "ChangeCategory": {
+      "enum": [
+        "vectorization",
+        "typing",
+        "complexity",
+        "lint",
+        "correctness",
+        "testability"
+      ],
+      "title": "ChangeCategory",
+      "type": "string"
+    },
+    "ChangeNote": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/ChangeCategory"
+        },
+        "target": {
+          "description": "function/class affected",
+          "maxLength": 128,
+          "title": "Target",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 280,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "category",
+        "target",
+        "description"
+      ],
+      "title": "ChangeNote",
+      "type": "object"
+    },
+    "ComplexityEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "function",
+            "method",
+            "class"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "lineno": {
+          "minimum": 1,
+          "title": "Lineno",
+          "type": "integer"
+        },
+        "complexity": {
+          "description": "McCabe cyclomatic complexity M = E - N + 2P",
+          "minimum": 1,
+          "title": "Complexity",
+          "type": "integer"
+        },
+        "rank": {
+          "enum": [
+            "A",
+            "B",
+            "C",
+            "D",
+            "E",
+            "F"
+          ],
+          "title": "Rank",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "lineno",
+        "complexity",
+        "rank"
+      ],
+      "title": "ComplexityEntry",
+      "type": "object"
+    },
+    "LintFinding": {
+      "additionalProperties": false,
+      "properties": {
+        "tool": {
+          "enum": [
+            "ruff",
+            "mypy"
+          ],
+          "title": "Tool",
+          "type": "string"
+        },
+        "code": {
+          "maxLength": 64,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 500,
+          "title": "Message",
+          "type": "string"
+        },
+        "line": {
+          "minimum": 0,
+          "title": "Line",
+          "type": "integer"
+        },
+        "column": {
+          "minimum": 0,
+          "title": "Column",
+          "type": "integer"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "fixable": {
+          "title": "Fixable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "tool",
+        "code",
+        "message",
+        "line",
+        "column",
+        "severity",
+        "fixable"
+      ],
+      "title": "LintFinding",
+      "type": "object"
+    },
+    "RefactorProposal": {
+      "additionalProperties": false,
+      "properties": {
+        "refactored_code": {
+          "description": "Complete module source, no markdown fences.",
+          "minLength": 1,
+          "title": "Refactored Code",
+          "type": "string"
+        },
+        "tests_code": {
+          "description": "Complete pytest module; must `import candidate`.",
+          "minLength": 1,
+          "title": "Tests Code",
+          "type": "string"
+        },
+        "test_names": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Test Names",
+          "type": "array"
+        },
+        "changes": {
+          "items": {
+            "$ref": "#/$defs/ChangeNote"
+          },
+          "maxItems": 30,
+          "title": "Changes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "refactored_code",
+        "tests_code",
+        "test_names",
+        "changes"
+      ],
+      "title": "RefactorProposal",
+      "type": "object"
+    },
+    "Severity": {
+      "enum": [
+        "error",
+        "warning",
+        "note"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "StaticReport": {
+      "additionalProperties": false,
+      "description": "Evidence for one version of the code (original or refactored).",
+      "properties": {
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "parse_ok": {
+          "title": "Parse Ok",
+          "type": "boolean"
+        },
+        "lint": {
+          "items": {
+            "$ref": "#/$defs/LintFinding"
+          },
+          "title": "Lint",
+          "type": "array"
+        },
+        "complexity": {
+          "items": {
+            "$ref": "#/$defs/ComplexityEntry"
+          },
+          "title": "Complexity",
+          "type": "array"
+        },
+        "vectorization": {
+          "items": {
+            "$ref": "#/$defs/VectorizationIssue"
+          },
+          "title": "Vectorization",
+          "type": "array"
+        },
+        "types": {
+          "$ref": "#/$defs/TypeCoverage"
+        }
+      },
+      "required": [
+        "sha256",
+        "parse_ok",
+        "lint",
+        "complexity",
+        "vectorization",
+        "types"
+      ],
+      "title": "StaticReport",
+      "type": "object"
+    },
+    "TestExecution": {
+      "additionalProperties": false,
+      "properties": {
+        "collected": {
+          "minimum": 0,
+          "title": "Collected",
+          "type": "integer"
+        },
+        "passed": {
+          "minimum": 0,
+          "title": "Passed",
+          "type": "integer"
+        },
+        "failed": {
+          "minimum": 0,
+          "title": "Failed",
+          "type": "integer"
+        },
+        "errors": {
+          "minimum": 0,
+          "title": "Errors",
+          "type": "integer"
+        },
+        "skipped": {
+          "minimum": 0,
+          "title": "Skipped",
+          "type": "integer"
+        },
+        "duration_s": {
+          "minimum": 0.0,
+          "title": "Duration S",
+          "type": "number"
+        }
+      },
+      "required": [
+        "collected",
+        "passed",
+        "failed",
+        "errors",
+        "skipped",
+        "duration_s"
+      ],
+      "title": "TestExecution",
+      "type": "object"
+    },
+    "TypeCoverage": {
+      "additionalProperties": false,
+      "properties": {
+        "functions_total": {
+          "minimum": 0,
+          "title": "Functions Total",
+          "type": "integer"
+        },
+        "functions_fully_annotated": {
+          "minimum": 0,
+          "title": "Functions Fully Annotated",
+          "type": "integer"
+        },
+        "coverage_ratio": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Coverage Ratio",
+          "type": "number"
+        },
+        "mypy_strict_passed": {
+          "title": "Mypy Strict Passed",
+          "type": "boolean"
+        },
+        "mypy_error_count": {
+          "minimum": 0,
+          "title": "Mypy Error Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "functions_total",
+        "functions_fully_annotated",
+        "coverage_ratio",
+        "mypy_strict_passed",
+        "mypy_error_count"
+      ],
+      "title": "TypeCoverage",
+      "type": "object"
+    },
+    "VectorizationAntiPattern": {
+      "enum": [
+        "iterrows",
+        "itertuples",
+        "range_len_indexing",
+        "apply_axis_1",
+        "growing_concat_in_loop",
+        "elementwise_array_loop"
+      ],
+      "title": "VectorizationAntiPattern",
+      "type": "string"
+    },
+    "VectorizationIssue": {
+      "additionalProperties": false,
+      "properties": {
+        "line": {
+          "minimum": 1,
+          "title": "Line",
+          "type": "integer"
+        },
+        "pattern": {
+          "$ref": "#/$defs/VectorizationAntiPattern"
+        },
+        "snippet": {
+          "maxLength": 300,
+          "title": "Snippet",
+          "type": "string"
+        },
+        "suggested_replacement": {
+          "maxLength": 280,
+          "minLength": 1,
+          "title": "Suggested Replacement",
+          "type": "string"
+        }
+      },
+      "required": [
+        "line",
+        "pattern",
+        "snippet",
+        "suggested_replacement"
+      ],
+      "title": "VectorizationIssue",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract_id": {
+      "const": "CodeReviewAndRefactor",
+      "default": "CodeReviewAndRefactor",
+      "title": "Contract Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "verdict": {
+      "enum": [
+        "APPROVE",
+        "REQUEST_CHANGES",
+        "REJECT"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    },
+    "iterations": {
+      "minimum": 1,
+      "title": "Iterations",
+      "type": "integer"
+    },
+    "before": {
+      "$ref": "#/$defs/StaticReport"
+    },
+    "after": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StaticReport"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "proposal": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RefactorProposal"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "tests": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TestExecution"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "unified_diff": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Unified Diff"
+    },
+    "artifacts_dir": {
+      "title": "Artifacts Dir",
+      "type": "string"
+    }
+  },
+  "required": [
+    "verdict",
+    "iterations",
+    "before",
+    "after",
+    "proposal",
+    "tests",
+    "unified_diff",
+    "artifacts_dir"
+  ],
+  "title": "CodeReviewAndRefactor",
+  "type": "object"
+}

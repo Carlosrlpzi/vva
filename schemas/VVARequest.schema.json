@@ -1,0 +1,529 @@
+{
+  "$defs": {
+    "DatasetAuditRequest": {
+      "additionalProperties": false,
+      "description": "Audit a YOLO dataset described by an Ultralytics-style data.yaml.",
+      "properties": {
+        "task": {
+          "const": "DATASET_AUDIT",
+          "title": "Task",
+          "type": "string"
+        },
+        "data_yaml": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Data Yaml",
+          "type": "string"
+        },
+        "inference_width": {
+          "default": 640,
+          "maximum": 4096,
+          "minimum": 32,
+          "title": "Inference Width",
+          "type": "integer"
+        },
+        "inference_height": {
+          "default": 640,
+          "maximum": 4096,
+          "minimum": 32,
+          "title": "Inference Height",
+          "type": "integer"
+        },
+        "near_duplicate_max_hamming": {
+          "default": 4,
+          "maximum": 7,
+          "minimum": 0,
+          "title": "Near Duplicate Max Hamming",
+          "type": "integer"
+        },
+        "group_pattern": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Group Pattern"
+        },
+        "max_examples": {
+          "default": 20,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Max Examples",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "task",
+        "data_yaml"
+      ],
+      "title": "DatasetAuditRequest",
+      "type": "object"
+    },
+    "DetectionEvalRequest": {
+      "additionalProperties": false,
+      "description": "Score one predictions file against the ground truth of one split.",
+      "properties": {
+        "data_yaml": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Data Yaml",
+          "type": "string"
+        },
+        "split": {
+          "default": "val",
+          "pattern": "^[A-Za-z0-9_.-]{1,64}$",
+          "title": "Split",
+          "type": "string"
+        },
+        "box_format": {
+          "default": "xyxyn",
+          "enum": [
+            "xyxyn",
+            "xywhn"
+          ],
+          "title": "Box Format",
+          "type": "string"
+        },
+        "operating_confidence": {
+          "default": 0.6,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Operating Confidence",
+          "type": "number"
+        },
+        "max_dets_per_image": {
+          "default": 100,
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Max Dets Per Image",
+          "type": "integer"
+        },
+        "task": {
+          "const": "DETECTION_EVAL",
+          "title": "Task",
+          "type": "string"
+        },
+        "predictions": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Predictions",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data_yaml",
+        "task",
+        "predictions"
+      ],
+      "title": "DetectionEvalRequest",
+      "type": "object"
+    },
+    "PipelineBenchRequest": {
+      "additionalProperties": false,
+      "description": "Summarise per-frame timing (and optional thermal) logs from the Pi.",
+      "properties": {
+        "task": {
+          "const": "PIPELINE_BENCH",
+          "title": "Task",
+          "type": "string"
+        },
+        "timings_log": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Timings Log",
+          "type": "string"
+        },
+        "system_log": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "System Log"
+        },
+        "warmup_s": {
+          "default": 30.0,
+          "maximum": 3600.0,
+          "minimum": 0.0,
+          "title": "Warmup S",
+          "type": "number"
+        },
+        "latency_budget_ms": {
+          "default": 500.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Latency Budget Ms",
+          "type": "number"
+        },
+        "max_drop_rate": {
+          "default": 0.01,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Max Drop Rate",
+          "type": "number"
+        },
+        "throttle_temp_c": {
+          "default": 80.0,
+          "maximum": 110.0,
+          "minimum": 40.0,
+          "title": "Throttle Temp C",
+          "type": "number"
+        }
+      },
+      "required": [
+        "task",
+        "timings_log"
+      ],
+      "title": "PipelineBenchRequest",
+      "type": "object"
+    },
+    "PolicySpec": {
+      "additionalProperties": false,
+      "description": "One candidate alert policy to replay (mirrors core.state_machine.EventRule).",
+      "properties": {
+        "name": {
+          "pattern": "^[A-Za-z0-9_.-]{1,64}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "classes": {
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Classes",
+          "type": "array"
+        },
+        "min_confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Min Confidence",
+          "type": "number"
+        },
+        "min_consecutive_frames": {
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Min Consecutive Frames",
+          "type": "integer"
+        },
+        "cooldown_s": {
+          "maximum": 86400.0,
+          "minimum": 0.0,
+          "title": "Cooldown S",
+          "type": "number"
+        },
+        "max_gap_s": {
+          "exclusiveMinimum": 0.0,
+          "maximum": 3600.0,
+          "title": "Max Gap S",
+          "type": "number"
+        },
+        "zones": {
+          "patternProperties": {
+            "^[A-Za-z0-9_.-]{1,64}$": {
+              "items": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "maximum": 1.0,
+                    "minimum": 0.0,
+                    "type": "number"
+                  },
+                  {
+                    "maximum": 1.0,
+                    "minimum": 0.0,
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              "type": "array"
+            }
+          },
+          "title": "Zones",
+          "type": "object"
+        }
+      },
+      "required": [
+        "name",
+        "classes",
+        "min_confidence",
+        "min_consecutive_frames",
+        "cooldown_s",
+        "max_gap_s"
+      ],
+      "title": "PolicySpec",
+      "type": "object"
+    },
+    "QuantParityRequest": {
+      "additionalProperties": false,
+      "description": "Compare a reference model (e.g. FP32 ONNX) with a candidate (INT8 HEF).",
+      "properties": {
+        "data_yaml": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Data Yaml",
+          "type": "string"
+        },
+        "split": {
+          "default": "val",
+          "pattern": "^[A-Za-z0-9_.-]{1,64}$",
+          "title": "Split",
+          "type": "string"
+        },
+        "box_format": {
+          "default": "xyxyn",
+          "enum": [
+            "xyxyn",
+            "xywhn"
+          ],
+          "title": "Box Format",
+          "type": "string"
+        },
+        "operating_confidence": {
+          "default": 0.6,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Operating Confidence",
+          "type": "number"
+        },
+        "max_dets_per_image": {
+          "default": 100,
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Max Dets Per Image",
+          "type": "integer"
+        },
+        "task": {
+          "const": "QUANT_PARITY",
+          "title": "Task",
+          "type": "string"
+        },
+        "reference_predictions": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Reference Predictions",
+          "type": "string"
+        },
+        "candidate_predictions": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Candidate Predictions",
+          "type": "string"
+        },
+        "max_map50_drop": {
+          "default": 0.02,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Max Map50 Drop",
+          "type": "number"
+        },
+        "max_map50_95_drop": {
+          "default": 0.03,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Max Map50 95 Drop",
+          "type": "number"
+        },
+        "agreement_iou": {
+          "default": 0.5,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Agreement Iou",
+          "type": "number"
+        }
+      },
+      "required": [
+        "data_yaml",
+        "task",
+        "reference_predictions",
+        "candidate_predictions"
+      ],
+      "title": "QuantParityRequest",
+      "type": "object"
+    },
+    "RuleReplayRequest": {
+      "additionalProperties": false,
+      "description": "Replay recorded frames through candidate policies.",
+      "properties": {
+        "task": {
+          "const": "RULE_REPLAY",
+          "title": "Task",
+          "type": "string"
+        },
+        "frames_log": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Frames Log",
+          "type": "string"
+        },
+        "events": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Events"
+        },
+        "policies": {
+          "items": {
+            "$ref": "#/$defs/PolicySpec"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Policies",
+          "type": "array"
+        },
+        "alert_grace_s": {
+          "default": 10.0,
+          "maximum": 600.0,
+          "minimum": 0.0,
+          "title": "Alert Grace S",
+          "type": "number"
+        },
+        "max_alerts_listed": {
+          "default": 500,
+          "maximum": 5000,
+          "minimum": 0,
+          "title": "Max Alerts Listed",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "task",
+        "frames_log",
+        "policies"
+      ],
+      "title": "RuleReplayRequest",
+      "type": "object"
+    },
+    "StreamProbeRequest": {
+      "additionalProperties": false,
+      "description": "Measure a camera stream (RTSP via env var) or a recorded file.",
+      "properties": {
+        "task": {
+          "const": "STREAM_PROBE",
+          "title": "Task",
+          "type": "string"
+        },
+        "camera_id": {
+          "pattern": "^[A-Za-z0-9_.-]{1,64}$",
+          "title": "Camera Id",
+          "type": "string"
+        },
+        "url_env": {
+          "anyOf": [
+            {
+              "pattern": "^VVA_[A-Z0-9_]+_URL$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url Env"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "duration_s": {
+          "default": 10.0,
+          "maximum": 120.0,
+          "minimum": 2.0,
+          "title": "Duration S",
+          "type": "number"
+        },
+        "timeout_s": {
+          "default": 30.0,
+          "maximum": 300.0,
+          "minimum": 5.0,
+          "title": "Timeout S",
+          "type": "number"
+        },
+        "rtsp_transport": {
+          "default": "tcp",
+          "enum": [
+            "tcp",
+            "udp"
+          ],
+          "title": "Rtsp Transport",
+          "type": "string"
+        },
+        "min_fps_ratio": {
+          "default": 0.9,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Min Fps Ratio",
+          "type": "number"
+        }
+      },
+      "required": [
+        "task",
+        "camera_id"
+      ],
+      "title": "StreamProbeRequest",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "mapping": {
+      "DATASET_AUDIT": "#/$defs/DatasetAuditRequest",
+      "DETECTION_EVAL": "#/$defs/DetectionEvalRequest",
+      "PIPELINE_BENCH": "#/$defs/PipelineBenchRequest",
+      "QUANT_PARITY": "#/$defs/QuantParityRequest",
+      "RULE_REPLAY": "#/$defs/RuleReplayRequest",
+      "STREAM_PROBE": "#/$defs/StreamProbeRequest"
+    },
+    "propertyName": "task"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/DatasetAuditRequest"
+    },
+    {
+      "$ref": "#/$defs/DetectionEvalRequest"
+    },
+    {
+      "$ref": "#/$defs/QuantParityRequest"
+    },
+    {
+      "$ref": "#/$defs/RuleReplayRequest"
+    },
+    {
+      "$ref": "#/$defs/StreamProbeRequest"
+    },
+    {
+      "$ref": "#/$defs/PipelineBenchRequest"
+    }
+  ]
+}

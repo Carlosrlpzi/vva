@@ -1,0 +1,87 @@
+{
+  "$defs": {
+    "Detection": {
+      "additionalProperties": false,
+      "description": "One detector output after NMS.",
+      "properties": {
+        "class_name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Class Name",
+          "type": "string"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "bbox_xyxy": {
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "title": "Bbox Xyxy",
+          "type": "array"
+        }
+      },
+      "required": [
+        "class_name",
+        "confidence",
+        "bbox_xyxy"
+      ],
+      "title": "Detection",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One processed frame from a live camera (input of RULE_REPLAY).",
+  "properties": {
+    "width": {
+      "exclusiveMinimum": 0,
+      "maximum": 16384,
+      "title": "Width",
+      "type": "integer"
+    },
+    "height": {
+      "exclusiveMinimum": 0,
+      "maximum": 16384,
+      "title": "Height",
+      "type": "integer"
+    },
+    "detections": {
+      "items": {
+        "$ref": "#/$defs/Detection"
+      },
+      "maxItems": 1000,
+      "title": "Detections",
+      "type": "array"
+    },
+    "camera_id": {
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+      "title": "Camera Id",
+      "type": "string"
+    },
+    "frame_index": {
+      "minimum": 0,
+      "title": "Frame Index",
+      "type": "integer"
+    },
+    "ts": {
+      "minimum": 0.0,
+      "title": "Ts",
+      "type": "number"
+    }
+  },
+  "required": [
+    "width",
+    "height",
+    "detections",
+    "camera_id",
+    "frame_index",
+    "ts"
+  ],
+  "title": "FrameRecord",
+  "type": "object"
+}

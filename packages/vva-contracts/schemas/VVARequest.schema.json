@@ -1,0 +1,543 @@
+{
+  "$defs": {
+    "DatasetAuditRequest": {
+      "additionalProperties": false,
+      "description": "Audit a YOLO-format dataset before training or evaluating on it.",
+      "properties": {
+        "task": {
+          "const": "DATASET_AUDIT",
+          "title": "Task",
+          "type": "string"
+        },
+        "dataset_root": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Dataset Root",
+          "type": "string"
+        },
+        "data_yaml": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data Yaml"
+        },
+        "splits": {
+          "items": {
+            "pattern": "^[A-Za-z0-9_-]{1,32}$",
+            "type": "string"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "title": "Splits",
+          "type": "array"
+        },
+        "inference_size": {
+          "items": {
+            "type": "integer"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "title": "Inference Size",
+          "type": "array"
+        },
+        "min_box_px": {
+          "default": 16,
+          "maximum": 512,
+          "minimum": 2,
+          "title": "Min Box Px",
+          "type": "integer"
+        },
+        "group_regex": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Group Regex"
+        },
+        "dhash_hamming_threshold": {
+          "default": 4,
+          "maximum": 7,
+          "minimum": 0,
+          "title": "Dhash Hamming Threshold",
+          "type": "integer"
+        },
+        "max_images": {
+          "default": 50000,
+          "maximum": 200000,
+          "minimum": 1,
+          "title": "Max Images",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "task",
+        "dataset_root",
+        "inference_size"
+      ],
+      "title": "DatasetAuditRequest",
+      "type": "object"
+    },
+    "DetectionEvalRequest": {
+      "additionalProperties": false,
+      "description": "Evaluate one predictions file against a labeled split.",
+      "properties": {
+        "task": {
+          "const": "DETECTION_EVAL",
+          "title": "Task",
+          "type": "string"
+        },
+        "dataset_root": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Dataset Root",
+          "type": "string"
+        },
+        "data_yaml": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data Yaml"
+        },
+        "split": {
+          "default": "val",
+          "pattern": "^[A-Za-z0-9_-]{1,32}$",
+          "title": "Split",
+          "type": "string"
+        },
+        "predictions": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Predictions",
+          "type": "string"
+        },
+        "operating_confidence": {
+          "default": 0.6,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Operating Confidence",
+          "type": "number"
+        },
+        "classes": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Classes"
+        }
+      },
+      "required": [
+        "task",
+        "dataset_root",
+        "predictions"
+      ],
+      "title": "DetectionEvalRequest",
+      "type": "object"
+    },
+    "EventPolicy": {
+      "additionalProperties": false,
+      "description": "One candidate alert rule to replay. Units are in the field names.",
+      "properties": {
+        "name": {
+          "pattern": "^[A-Za-z0-9_.-]{1,64}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "classes": {
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Classes",
+          "type": "array"
+        },
+        "min_confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Min Confidence",
+          "type": "number"
+        },
+        "min_consecutive_frames": {
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Min Consecutive Frames",
+          "type": "integer"
+        },
+        "cooldown_s": {
+          "maximum": 86400.0,
+          "minimum": 0.0,
+          "title": "Cooldown S",
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "classes",
+        "min_confidence",
+        "min_consecutive_frames",
+        "cooldown_s"
+      ],
+      "title": "EventPolicy",
+      "type": "object"
+    },
+    "PipelineBenchRequest": {
+      "additionalProperties": false,
+      "description": "Summarize a bench log (timing records + system samples).",
+      "properties": {
+        "task": {
+          "const": "PIPELINE_BENCH",
+          "title": "Task",
+          "type": "string"
+        },
+        "bench_log": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Bench Log",
+          "type": "string"
+        },
+        "target_fps": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "maximum": 120.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Fps"
+        },
+        "temp_warn_c": {
+          "default": 80.0,
+          "maximum": 110.0,
+          "minimum": 40.0,
+          "title": "Temp Warn C",
+          "type": "number"
+        },
+        "latency_budget_ms": {
+          "default": 500.0,
+          "exclusiveMinimum": 0.0,
+          "maximum": 60000.0,
+          "title": "Latency Budget Ms",
+          "type": "number"
+        }
+      },
+      "required": [
+        "task",
+        "bench_log"
+      ],
+      "title": "PipelineBenchRequest",
+      "type": "object"
+    },
+    "QuantParityRequest": {
+      "additionalProperties": false,
+      "description": "Compare a reference model (e.g. ONNX FP32) with a candidate (e.g. HEF INT8).",
+      "properties": {
+        "task": {
+          "const": "QUANT_PARITY",
+          "title": "Task",
+          "type": "string"
+        },
+        "dataset_root": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Dataset Root",
+          "type": "string"
+        },
+        "data_yaml": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data Yaml"
+        },
+        "split": {
+          "default": "val",
+          "pattern": "^[A-Za-z0-9_-]{1,32}$",
+          "title": "Split",
+          "type": "string"
+        },
+        "reference_predictions": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Reference Predictions",
+          "type": "string"
+        },
+        "candidate_predictions": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Candidate Predictions",
+          "type": "string"
+        },
+        "operating_confidence": {
+          "default": 0.6,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Operating Confidence",
+          "type": "number"
+        },
+        "max_map50_drop": {
+          "default": 0.02,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Max Map50 Drop",
+          "type": "number"
+        },
+        "classes": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 100,
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Classes"
+        }
+      },
+      "required": [
+        "task",
+        "dataset_root",
+        "reference_predictions",
+        "candidate_predictions"
+      ],
+      "title": "QuantParityRequest",
+      "type": "object"
+    },
+    "RuleReplayRequest": {
+      "additionalProperties": false,
+      "description": "Replay logged frames through candidate alert policies.",
+      "properties": {
+        "task": {
+          "const": "RULE_REPLAY",
+          "title": "Task",
+          "type": "string"
+        },
+        "frames": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Frames",
+          "type": "string"
+        },
+        "policies": {
+          "items": {
+            "$ref": "#/$defs/EventPolicy"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Policies",
+          "type": "array"
+        },
+        "zones": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Zones"
+        },
+        "ground_truth_events": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ground Truth Events"
+        },
+        "match_tolerance_s": {
+          "default": 2.0,
+          "maximum": 600.0,
+          "minimum": 0.0,
+          "title": "Match Tolerance S",
+          "type": "number"
+        },
+        "max_frame_gap_s": {
+          "default": 1.0,
+          "exclusiveMinimum": 0.0,
+          "maximum": 3600.0,
+          "title": "Max Frame Gap S",
+          "type": "number"
+        }
+      },
+      "required": [
+        "task",
+        "frames",
+        "policies"
+      ],
+      "title": "RuleReplayRequest",
+      "type": "object"
+    },
+    "StreamProbeRequest": {
+      "additionalProperties": false,
+      "description": "Measure a video source: codec, resolution, real frame rate, drops.\n\nExactly one source:\n* ``url_env``: NAME of an environment variable holding the RTSP URL. The\n  URL (which contains the camera password) never travels through the\n  model; only the variable name does. The name pattern prevents using the\n  tool to read unrelated secrets such as ``DEEPSEEK_API_KEY``.\n* ``path``: a recorded clip inside the workspace (also used by tests).",
+      "properties": {
+        "task": {
+          "const": "STREAM_PROBE",
+          "title": "Task",
+          "type": "string"
+        },
+        "url_env": {
+          "anyOf": [
+            {
+              "pattern": "^VVA_CAM_[A-Z0-9_]{1,48}_URL$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url Env"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "duration_s": {
+          "default": 10.0,
+          "maximum": 120.0,
+          "minimum": 2.0,
+          "title": "Duration S",
+          "type": "number"
+        },
+        "expected_fps": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "maximum": 120.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Fps"
+        },
+        "rtsp_transport": {
+          "default": "tcp",
+          "enum": [
+            "tcp",
+            "udp"
+          ],
+          "title": "Rtsp Transport",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task"
+      ],
+      "title": "StreamProbeRequest",
+      "type": "object"
+    }
+  },
+  "description": "Top-level request: the ``task`` field selects the model.",
+  "discriminator": {
+    "mapping": {
+      "DATASET_AUDIT": "#/$defs/DatasetAuditRequest",
+      "DETECTION_EVAL": "#/$defs/DetectionEvalRequest",
+      "PIPELINE_BENCH": "#/$defs/PipelineBenchRequest",
+      "QUANT_PARITY": "#/$defs/QuantParityRequest",
+      "RULE_REPLAY": "#/$defs/RuleReplayRequest",
+      "STREAM_PROBE": "#/$defs/StreamProbeRequest"
+    },
+    "propertyName": "task"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/DatasetAuditRequest"
+    },
+    {
+      "$ref": "#/$defs/DetectionEvalRequest"
+    },
+    {
+      "$ref": "#/$defs/QuantParityRequest"
+    },
+    {
+      "$ref": "#/$defs/RuleReplayRequest"
+    },
+    {
+      "$ref": "#/$defs/StreamProbeRequest"
+    },
+    {
+      "$ref": "#/$defs/PipelineBenchRequest"
+    }
+  ],
+  "title": "VVARequest"
+}

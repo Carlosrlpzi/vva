@@ -1,0 +1,61 @@
+[project]
+name = "vva-contracts"
+version = "0.1.0"
+description = "Deterministic, auditable measurement contracts for the Video Surveillance Assistant (no LLM in the tool path)"
+requires-python = ">=3.11"
+# Every dependency is here for a measured reason:
+#   pydantic  -> contracts and semantic validators (the acceptance boundary)
+#   numpy     -> vectorised IoU / AP / percentile computations
+#   pillow    -> image headers (letterbox sizes) and perceptual hashes
+#   pyyaml    -> Ultralytics-style data.yaml parsing (safe_load only)
+dependencies = ["pydantic>=2.7", "numpy>=1.26", "pillow>=10.0", "pyyaml>=6.0"]
+
+[project.optional-dependencies]
+dev = ["ruff>=0.6", "mypy>=1.11", "pytest>=8", "types-PyYAML"]
+# pycocotools is only used by a cross-check test that compares our AP against
+# the reference COCO implementation. It is never imported by the package.
+crosscheck = ["pycocotools>=2.0"]
+
+[project.scripts]
+vva = "vva_contracts.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vva_contracts"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# "D" (pydocstyle) makes "every public module/class/function is documented" a
+# machine-checked rule instead of a convention. That is what makes the code
+# reviewable line by line: the docstring states the contract, comments state why.
+select = ["E", "F", "W", "I", "B", "UP", "N", "SIM", "ANN", "RUF", "D", "PL", "C90"]
+# D401 (imperative mood) and N818 (Error suffix) are style-only; the domain
+# names ContractViolation / InvalidInput read better in error output.
+ignore = ["D203", "D213", "D401", "D107", "N818", "PLR2004", "PLR0913"]
+
+[tool.ruff.lint.mccabe]
+# Cyclomatic complexity M = E - N + 2P. Above 10 a function has too many
+# independent paths to review (and test) one by one.
+max-complexity = 10
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D", "ANN", "PLR"]
+
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["pycocotools.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

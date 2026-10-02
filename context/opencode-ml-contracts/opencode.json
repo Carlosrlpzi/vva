@@ -1,0 +1,37 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "deepseek-flash-api/deepseek-flash",
+  "small_model": "deepseek-flash-api/deepseek-flash",
+  "default_agent": "ml-contracts",
+  "provider": {
+    "deepseek-flash-api": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "DeepSeek Flash",
+      "options": {
+        "baseURL": "https://api.deepseek.com/v1",
+        "apiKey": "{env:DEEPSEEK_API_KEY}"
+      },
+      "models": {
+        "deepseek-flash": {
+          "name": "DeepSeek Flash",
+          "tool_call": true
+        }
+      }
+    }
+  },
+  "agent": {
+    "ml-contracts": {
+      "description": "Typed ML workflows: measured evidence, validated outputs, no Jev",
+      "mode": "primary",
+      "prompt": "{file:./AGENTS.md}",
+      "permission": {
+        "*": "deny",
+        "read": "allow",
+        "glob": "allow",
+        "grep": "allow",
+        "skill": "allow",
+        "ml_contract": "ask"
+      }
+    }
+  }
+}

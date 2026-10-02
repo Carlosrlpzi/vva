@@ -1,0 +1,277 @@
+{
+  "$defs": {
+    "FrameTiming": {
+      "additionalProperties": false,
+      "properties": {
+        "n_frames": {
+          "minimum": 0,
+          "title": "N Frames",
+          "type": "integer"
+        },
+        "span_s": {
+          "minimum": 0.0,
+          "title": "Span S",
+          "type": "number"
+        },
+        "measured_fps": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Measured Fps"
+        },
+        "nominal_interval_ms": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Nominal Interval Ms"
+        },
+        "nominal_interval_origin": {
+          "anyOf": [
+            {
+              "enum": [
+                "expected_fps",
+                "declared_fps",
+                "median_interval"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Nominal Interval Origin"
+        },
+        "interval_ms_p50": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Interval Ms P50"
+        },
+        "interval_ms_p95": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Interval Ms P95"
+        },
+        "interval_ms_max": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Interval Ms Max"
+        },
+        "n_gaps": {
+          "minimum": 0,
+          "title": "N Gaps",
+          "type": "integer"
+        },
+        "estimated_dropped_frames": {
+          "minimum": 0,
+          "title": "Estimated Dropped Frames",
+          "type": "integer"
+        },
+        "drop_share": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Drop Share"
+        }
+      },
+      "required": [
+        "n_frames",
+        "span_s",
+        "measured_fps",
+        "nominal_interval_ms",
+        "nominal_interval_origin",
+        "interval_ms_p50",
+        "interval_ms_p95",
+        "interval_ms_max",
+        "n_gaps",
+        "estimated_dropped_frames",
+        "drop_share"
+      ],
+      "title": "FrameTiming",
+      "type": "object"
+    },
+    "StreamSource": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "rtsp",
+            "file"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "redacted": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Redacted",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "redacted"
+      ],
+      "title": "StreamSource",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "contract_id": {
+      "const": "StreamProbeReport",
+      "default": "StreamProbeReport",
+      "title": "Contract Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "tool_version": {
+      "title": "Tool Version",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/StreamSource"
+    },
+    "codec": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Codec",
+      "type": "string"
+    },
+    "profile": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Profile"
+    },
+    "width": {
+      "exclusiveMinimum": 0,
+      "title": "Width",
+      "type": "integer"
+    },
+    "height": {
+      "exclusiveMinimum": 0,
+      "title": "Height",
+      "type": "integer"
+    },
+    "declared_fps": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Declared Fps"
+    },
+    "duration_requested_s": {
+      "exclusiveMinimum": 0.0,
+      "title": "Duration Requested S",
+      "type": "number"
+    },
+    "expected_fps": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Expected Fps"
+    },
+    "timing": {
+      "$ref": "#/$defs/FrameTiming"
+    },
+    "flags": {
+      "items": {
+        "enum": [
+          "TOO_FEW_FRAMES",
+          "FPS_BELOW_EXPECTED",
+          "FRAME_DROPS"
+        ],
+        "type": "string"
+      },
+      "title": "Flags",
+      "type": "array"
+    },
+    "verdict": {
+      "enum": [
+        "PASS",
+        "WARN",
+        "FAIL"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "required": [
+    "tool_version",
+    "source",
+    "codec",
+    "profile",
+    "width",
+    "height",
+    "declared_fps",
+    "duration_requested_s",
+    "expected_fps",
+    "timing",
+    "flags",
+    "verdict"
+  ],
+  "title": "StreamProbeReport",
+  "type": "object"
+}

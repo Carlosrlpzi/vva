@@ -1,0 +1,122 @@
+{
+  "$defs": {
+    "SystemSample": {
+      "additionalProperties": false,
+      "description": "Periodic host health sample (input of PIPELINE_BENCH).\n\n``throttled_flags`` is the integer from ``vcgencmd get_throttled`` on the\nPi (0 means no under-voltage/throttling ever observed); ``None`` when not\nsampled.",
+      "properties": {
+        "kind": {
+          "const": "system",
+          "title": "Kind",
+          "type": "string"
+        },
+        "ts": {
+          "minimum": 0.0,
+          "title": "Ts",
+          "type": "number"
+        },
+        "cpu_temp_c": {
+          "maximum": 150.0,
+          "minimum": -40.0,
+          "title": "Cpu Temp C",
+          "type": "number"
+        },
+        "cpu_percent": {
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "title": "Cpu Percent",
+          "type": "number"
+        },
+        "throttled_flags": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Throttled Flags"
+        }
+      },
+      "required": [
+        "kind",
+        "ts",
+        "cpu_temp_c",
+        "cpu_percent"
+      ],
+      "title": "SystemSample",
+      "type": "object"
+    },
+    "TimingRecord": {
+      "additionalProperties": false,
+      "description": "Per-frame stage timestamps (input of PIPELINE_BENCH).\n\nThe four timestamps split end-to-end latency into stages:\ncapture -> inference start (queueing/decoding), inference start -> end\n(Hailo), inference end -> done (tracker, rules, persistence).\nUse ``time.time()`` for all four, on the same host.",
+      "properties": {
+        "kind": {
+          "const": "timing",
+          "title": "Kind",
+          "type": "string"
+        },
+        "camera_id": {
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+          "title": "Camera Id",
+          "type": "string"
+        },
+        "frame_index": {
+          "minimum": 0,
+          "title": "Frame Index",
+          "type": "integer"
+        },
+        "ts_capture": {
+          "minimum": 0.0,
+          "title": "Ts Capture",
+          "type": "number"
+        },
+        "ts_infer_start": {
+          "minimum": 0.0,
+          "title": "Ts Infer Start",
+          "type": "number"
+        },
+        "ts_infer_end": {
+          "minimum": 0.0,
+          "title": "Ts Infer End",
+          "type": "number"
+        },
+        "ts_done": {
+          "minimum": 0.0,
+          "title": "Ts Done",
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind",
+        "camera_id",
+        "frame_index",
+        "ts_capture",
+        "ts_infer_start",
+        "ts_infer_end",
+        "ts_done"
+      ],
+      "title": "TimingRecord",
+      "type": "object"
+    }
+  },
+  "description": "One line of a bench log: either a timing record or a system sample.",
+  "discriminator": {
+    "mapping": {
+      "system": "#/$defs/SystemSample",
+      "timing": "#/$defs/TimingRecord"
+    },
+    "propertyName": "kind"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/TimingRecord"
+    },
+    {
+      "$ref": "#/$defs/SystemSample"
+    }
+  ],
+  "title": "BenchLine"
+}

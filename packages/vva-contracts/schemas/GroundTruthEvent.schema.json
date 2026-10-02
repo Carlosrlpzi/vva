@@ -1,0 +1,35 @@
+{
+  "additionalProperties": false,
+  "description": "A human-annotated real event: someone/something was really there.",
+  "properties": {
+    "camera_id": {
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+      "title": "Camera Id",
+      "type": "string"
+    },
+    "start_ts": {
+      "minimum": 0.0,
+      "title": "Start Ts",
+      "type": "number"
+    },
+    "end_ts": {
+      "minimum": 0.0,
+      "title": "End Ts",
+      "type": "number"
+    },
+    "label": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Label",
+      "type": "string"
+    }
+  },
+  "required": [
+    "camera_id",
+    "start_ts",
+    "end_ts",
+    "label"
+  ],
+  "title": "GroundTruthEvent",
+  "type": "object"
+}

@@ -1,0 +1,40 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "answer": {
+      "maxLength": 1500,
+      "minLength": 1,
+      "title": "Answer",
+      "type": "string"
+    },
+    "code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Runnable Python only, no markdown fences.",
+      "title": "Code"
+    },
+    "assumptions": {
+      "items": {
+        "maxLength": 280,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 5,
+      "title": "Assumptions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "answer",
+    "code",
+    "assumptions"
+  ],
+  "title": "RawQueryAnswer",
+  "type": "object"
+}
