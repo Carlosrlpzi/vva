@@ -38,10 +38,18 @@ Verificación: `ruff check src`, `ruff format --check src`, `mypy src`, `pytest 
 **Existe y está verificado en Linux x86 (no en la Pi):** las 6 tareas, la CLI, los contratos,
 las pruebas, `ruff` y `mypy --strict` sobre `src`.
 
-**NO existe todavía** (lo debe producir el agente o hacerse en una segunda pasada):
-- `.opencode/` completo: el tool `vva_contract` (bridge TypeScript), las skills `vva-*` y su prueba de consistencia.
-- `opencode.json` y `AGENTS.md` del proyecto (los de `context/` son del paquete anterior, de ML tabular).
-- Documentación en español (`docs/`), `VERIFICATION.md` de este paquete.
+**Archivos que NO escribí y que aparecieron en este workspace (sin verificar por mí):**
+- `.opencode/tools/vva_contract.ts`, `.opencode/lib/vva_bridge.ts`, `package.json`, `tsconfig.json`:
+  un bridge OpenCode. Por lectura, invoca `python -m vva_contracts run --workspace <dir>` con la petición
+  por stdin, que coincide con la CLI de `src/`. **No lo he compilado ni ejecutado** (`npm ci`, `npm run typecheck`
+  siguen pendientes). `node_modules/` no se incluye: se regenera con `npm --prefix .opencode ci`.
+- `packages/vva-contracts/`: **otra implementación completa del mismo paquete** (mismo nombre de import
+  `vva_contracts`, las mismas 6 tareas, schemas con nombres distintos: `PredictionRecord`, `ZonesFile`, `BenchLine`...).
+  No es la de `src/`. **No instales ambas en el mismo entorno**: comparten namespace. Hay que decidir cuál es la canónica.
+  Lo único que verifiqué de esa carpeta es que existe; no corrí sus pruebas.
+
+**Todavía no existe:** las skills `vva-*` (`.opencode/skills/`), su prueba de consistencia, `opencode.json` y
+`AGENTS.md` del proyecto (los de `context/` son del paquete anterior, de ML tabular), y la documentación en `docs/`.
 
 **Prueba que falla a propósito:** `tests/test_tasks_e2e.py::test_rule_replay_tradeoff`.
 Una alerta de falso positivo abre el cooldown por cámara y suprime un evento real que llega justo después.
