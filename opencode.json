@@ -1,0 +1,122 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "deepseek-vva/deepseek-flash",
+  "small_model": "deepseek-vva/deepseek-flash",
+  "default_agent": "vva-builder",
+  "share": "disabled",
+  "provider": {
+    "deepseek-vva": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "DeepSeek (VVA)",
+      "options": {
+        "baseURL": "https://api.deepseek.com",
+        "apiKey": "{env:DEEPSEEK_API_KEY}"
+      },
+      "models": {
+        "deepseek-flash": { "name": "DeepSeek V4.1 Flash", "tool_call": true },
+        "deepseek-v4-pro": { "name": "DeepSeek V4 Pro", "tool_call": true }
+      }
+    }
+  },
+  "permission": {
+    "*": "ask",
+    "read": { "*": "allow", "*.env": "deny", "*.env.*": "deny", "*.env.example": "allow" },
+    "external_directory": "deny",
+    "doom_loop": "ask"
+  },
+  "agent": {
+    "vva-builder": {
+      "description": "Implements VVA MVP modules on Flash; delegates hard design/debug/perf work to vva-pro",
+      "mode": "primary",
+      "model": "deepseek-vva/deepseek-flash",
+      "prompt": "{file:./prompts/vva-builder.md}",
+      "temperature": 0.1,
+      "permission": {
+        "*": "ask",
+        "read": { "*": "allow", "*.env": "deny", "*.env.*": "deny", "*.env.example": "allow" },
+        "glob": "allow",
+        "grep": "allow",
+        "list": "allow",
+        "lsp": "allow",
+        "edit": {
+          "*": "ask",
+          "opencode.json": "deny",
+          "AGENTS.md": "deny",
+          "prompts/*": "deny",
+          ".opencode/*": "deny",
+          "tests/test_skills_consistency.py": "deny",
+          "*.env": "deny"
+        },
+        "bash": {
+          "*": "ask",
+          "pytest*": "allow",
+          "python -m pytest*": "allow",
+          "ruff check*": "allow",
+          "ruff check*--fix*": "ask",
+          "ruff format --check*": "allow",
+          "mypy*": "allow",
+          "git status*": "allow",
+          "git diff*": "allow",
+          "git log*": "allow",
+          "git commit*": "deny",
+          "git push*": "deny",
+          "git remote*": "deny",
+          "curl*": "deny",
+          "wget*": "deny",
+          "ssh*": "deny",
+          "scp*": "deny",
+          "sudo*": "deny",
+          "rm -rf*": "deny"
+        },
+        "task": { "*": "deny", "vva-pro": "ask" },
+        "skill": { "*": "deny", "dev-*": "allow" },
+        "webfetch": "ask",
+        "websearch": "ask",
+        "vva_contract": "deny"
+      }
+    },
+    "vva-pro": {
+      "description": "DeepSeek Pro subagent: analytics-layer design, root-cause debugging, profiling-driven optimization. Returns patches, never edits.",
+      "mode": "subagent",
+      "model": "deepseek-vva/deepseek-v4-pro",
+      "prompt": "{file:./prompts/vva-pro.md}",
+      "temperature": 0.1,
+      "steps": 40,
+      "permission": {
+        "*": "deny",
+        "read": { "*": "allow", "*.env": "deny", "*.env.*": "deny", "*.env.example": "allow" },
+        "glob": "allow",
+        "grep": "allow",
+        "list": "allow",
+        "skill": { "*": "deny", "dev-*": "allow" },
+        "bash": {
+          "*": "deny",
+          "pytest*": "ask",
+          "python -m pytest*": "ask",
+          "python -m cProfile*": "ask",
+          "git diff*": "allow",
+          "git log*": "allow"
+        },
+        "edit": "deny",
+        "task": "deny",
+        "webfetch": "deny",
+        "websearch": "deny"
+      }
+    },
+    "vva-contracts": {
+      "description": "Read-only certifier: runs one deterministic vva_contract task and returns its validated JSON",
+      "mode": "primary",
+      "model": "deepseek-vva/deepseek-flash",
+      "prompt": "{file:./prompts/vva-contracts.md}",
+      "temperature": 0,
+      "permission": {
+        "*": "deny",
+        "read": { "*": "allow", "*.env": "deny", "*.env.*": "deny", "*.env.example": "allow" },
+        "glob": "allow",
+        "grep": "allow",
+        "skill": { "*": "deny", "vva-*": "allow" },
+        "vva_contract": "ask"
+      }
+    }
+  }
+}

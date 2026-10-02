@@ -158,7 +158,9 @@ class PipelineBenchRequest(StrictModel):
     timings_log: RelPath
     system_log: RelPath | None = None
     warmup_s: float = Field(default=30.0, ge=0.0, le=3_600.0)
-    latency_budget_ms: float = Field(default=500.0, gt=0.0)
+    # MVP guide v11.1 section 1.10 (observability.yaml): end-to-end alarm_p95 = 400 ms.
+    # The budget is checked against end-to-end p95, so the default mirrors that alarm.
+    latency_budget_ms: float = Field(default=400.0, gt=0.0)
     max_drop_rate: Ratio = 0.01
     throttle_temp_c: float = Field(default=80.0, ge=40.0, le=110.0)
 

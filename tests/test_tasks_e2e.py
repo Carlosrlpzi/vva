@@ -13,6 +13,8 @@ from builders import (
     write_jsonl,
 )
 
+from vva_contracts.contracts.requests import PipelineBenchRequest
+
 
 # ---------------------------------------------------------------- DATASET_AUDIT
 def test_dataset_audit_clean_dataset(tmp_path, run_cli):
@@ -117,9 +119,16 @@ def test_rule_replay_tradeoff(tmp_path, run_cli):
     )
     assert code == 0, rep
     loose, default = rep["policies"]
-    # Both catch the real event...
-    assert loose["ground_truth"]["recall"] == default["ground_truth"]["recall"] == 1.0
-    # ...but the loose policy also alerts on the bush and on isolated blips.
+    # Regression test of the CURRENT frame-level RULE_REPLAY logic (decided 2026-10-02).
+    # Known limitation, kept on purpose: the loose policy fires on an isolated false
+    # positive just before the real event; that alert opens the 45 s per-camera
+    # cooldown and suppresses the alert for the real event (t=100..130 s), so its
+    # recall is 0.0. The stricter default policy ignores the blip and catches it.
+    # Production cooldowns (30 s per track/zone, 5 s re-arm in M6; 10 s notification
+    # throttle in M8) are validated separately by the M3 replay harness, not here.
+    assert loose["ground_truth"]["recall"] == 0.0
+    assert default["ground_truth"]["recall"] == 1.0
+    # The loose policy also alerts on the bush and on isolated blips.
     assert loose["n_alerts"] > default["n_alerts"]
     assert default["ground_truth"]["alert_precision"] == 1.0
     # Latency of the default policy: 3 frames at 10 fps -> first alert at +0.2 s.
@@ -180,6 +189,21 @@ def test_pipeline_bench_pass_and_drop_failure(tmp_path, run_cli):
     code, bad = run_cli(tmp_path, {"task": "PIPELINE_BENCH", "timings_log": "drops.jsonl", "system_log": "sys.jsonl"})
     assert code == 0 and bad["verdict"] == "FAIL"
     assert {"drop_rate_high", "thermal_throttle_risk"} <= set(bad["flags"])
+
+
+def test_pipeline_bench_default_budget_is_guide_alarm(tmp_path, run_cli):
+    """The default budget is the guide's end-to-end p95 alarm (400 ms), applied to p95."""
+    assert PipelineBenchRequest(task="PIPELINE_BENCH", timings_log="t.jsonl").latency_budget_ms == 400.0
+    write_jsonl(tmp_path / "ok.jsonl", timing_log())
+    code, ok = run_cli(tmp_path, {"task": "PIPELINE_BENCH", "timings_log": "ok.jsonl"})
+    assert code == 0 and ok["latency_budget_ms"] == 400.0
+    # A budget just below the measured p95 must flag it; one at p95 must not (strict ">").
+    p95 = ok["overall"]["end_to_end"]["p95_ms"]
+    base = {"task": "PIPELINE_BENCH", "timings_log": "ok.jsonl"}
+    code, tight = run_cli(tmp_path, {**base, "latency_budget_ms": p95 * 0.999})
+    assert code == 0 and "latency_budget_exceeded" in tight["flags"] and tight["verdict"] == "FAIL"
+    code, exact = run_cli(tmp_path, {**base, "latency_budget_ms": p95})
+    assert code == 0 and "latency_budget_exceeded" not in exact["flags"]
 
 
 def test_timing_rows_must_be_causal(tmp_path, run_cli):

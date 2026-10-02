@@ -159,7 +159,7 @@
           "type": "number"
         },
         "latency_budget_ms": {
-          "default": 500.0,
+          "default": 400.0,
           "exclusiveMinimum": 0.0,
           "title": "Latency Budget Ms",
           "type": "number"

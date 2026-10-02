@@ -2,14 +2,22 @@
 
 Why this module exists
 ----------------------
-The project rule is "no LLM decides whether an alert fires". The decision is
-this small state machine, and it lives here, in a pure module, so that:
+The project rule is "no LLM decides whether an alert fires". This module is the
+deterministic *frame-level* alert rule used by RULE_REPLAY to compare candidate
+detection policies (confidence, consecutive frames, per-camera cooldown) over
+recorded frame logs.
 
-* the production pipeline (``src/events`` of the VVA app) imports it, and
-* RULE_REPLAY runs *the same object* over recorded detection logs.
+Scope (decided 2026-10-02): production does NOT import this module. The
+production event logic is the track-based state machine of milestone 6
+(``src/vva_app/events/state_machine.py``: confirmed tracks, 30 s per track/zone,
+5 s re-arm), plus the 10 s per-camera/event-type notification throttle of
+milestone 8 (``src/vva_app/notify/``). Those are validated by the milestone-3
+replay harness (``src/vva_app/eval/replay_runner.py``) running the real M6 code.
+A track-based replay task may be added to this package later.
 
-If replay and production used two implementations, tuning thresholds offline
-would tell you nothing about the live system.
+Known limitation: a false-positive alert opens the per-camera cooldown and can
+suppress the alert of a real event that starts inside it
+(``tests/test_tasks_e2e.py::test_rule_replay_tradeoff`` pins this behaviour).
 
 Rule semantics
 --------------
