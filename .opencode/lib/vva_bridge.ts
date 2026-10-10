@@ -1,7 +1,8 @@
 /**
  * Bridge between the OpenCode `vva_contract` tool and the Python CLI.
  *
- * Guarantees (each one is tested in .opencode/tests/vva_bridge.test.ts):
+ * Guarantees (bridge checks and synthetic Python round trips are in
+ * .opencode/tests/vva_bridge.test.ts; not every limit has a dedicated test):
  *  - Python is spawned WITHOUT a shell: request values can never become shell syntax.
  *  - The request travels on stdin, never on the command line (not visible in `ps`).
  *  - The child receives an environment ALLOWLIST: no DEEPSEEK_API_KEY, no
@@ -22,13 +23,18 @@ const ENV_EXACT = new Set(["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TEMP", "
 const ENV_PATTERNS = [/^VVA_ALLOW_[A-Z_]+$/, /^VVA_CAM_[A-Z0-9_]+_URL$/];
 
 export class BridgeError extends Error {
+  readonly exitCode: number | null;
+  readonly payload: unknown;
+
   constructor(
     message: string,
-    readonly exitCode: number | null,
-    readonly payload: unknown,
+    exitCode: number | null,
+    payload: unknown,
   ) {
     super(message);
     this.name = "BridgeError";
+    this.exitCode = exitCode;
+    this.payload = payload;
   }
 }
 
@@ -126,7 +132,13 @@ export function runVvaContract(opts: RunOptions): Promise<Record<string, unknown
       // Exit 1 (bug) or malformed output: never present it as a report.
       reject(new BridgeError(`vva_contract crashed (exit ${code}); stderr tail: ${stderrTail}`, code, null));
     });
-
+    
+    // A child that dies before stdin is fully written emits EPIPE on
+    // child.stdin. Termination is already governed by "close", the child
+    // "error" handler, the timer and the abort signal, so this error is a
+    // symptom of that death, not an additional failure condition: absorb it
+    // instead of letting an unhandled 'error' event throw and crash Node.
+    child.stdin.on("error", () => undefined);
     child.stdin.end(JSON.stringify(opts.request));
   });
 }
