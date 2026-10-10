@@ -12,4 +12,3 @@ node_modules/
 .pytest_cache/
 archive/
 context/
-schemas/
