@@ -15,6 +15,69 @@ Shared types (create once, in `src/vva_app/common/types.py`, before M1):
 | `Track` | `track_id`, `class_name`, `box_xyxyn`, `hits`, `is_confirmed`, `last_seen_mono` | `is_confirmed` is the only confirmation signal downstream |
 | `Event` | `event_id`, `camera_id`, `zone_id`, `track_id`, `kind`, `ts_mono`, `ts_utc` | MVP `kind` = `entry` only |
 
+Field names marked *proposed* in the design decisions below (e.g. `capture_mono_ns`, `capture_utc`,
+`track_max_age_s`) refine this minimum. The table above stays the minimum contract; the formal names
+are fixed when `src/vva_app/common/types.py` is written.
+
+## Design decisions (approved 2026-10-09)
+Cross-cutting decisions taken in review, before the shared types are written. The field names shown
+in `code` are **proposed**; the formal contract is fixed when `common/types.py` is written.
+D1 (M3 traces) is recorded in its own card; D2-D4 follow.
+
+### D2 Capture clock semantics
+- Decision: every frame carries two stamps taken together at ingest (the reader): `capture_mono_ns`
+  (monotonic nanoseconds) for ALL internal intervals - tracker Δt, frame age, timeouts, latencies; it
+  never goes backwards and its origin is undefined, so it is never used as a date - and `capture_utc`
+  (readable UTC) for history, the API and correlation with evidence and recordings.
+- Documented semantics: it is the "instant the decoded frame is read on the Pi", NOT the sensor
+  exposure timestamp (the Pi does not know it; decoder buffering can delay delivery).
+- Clock domains, never mixed (subtracting a UTC value from a monotonic one is forbidden):
+  - video rules, zone dwell, matching against ground truth -> observation time (`capture_utc` /
+    `capture_mono_ns` of the frame);
+  - notification throttling, NPU timeouts, camera staleness, watchdogs, pipeline latencies -> the real
+    monotonic execution clock.
+- Type fields (proposed): `FramePacket.capture_mono_ns`, `FramePacket.capture_utc`;
+  `Event.capture_mono_ns`, `Event.capture_utc` (refining the `ts_mono` / `ts_utc` minimum).
+- Affects: M2 (produces both stamps at read time), M5 and M6 (consume the monotonic one for Δt / age
+  and the UTC one for history).
+
+### D3 Out-of-order async results: drop by age
+- Decision: live production NEVER reorders; late results are DISCARDED, under three rules:
+  1. every drop is logged with `frame_id` and age, and counted in the `frames_dropped_stale_total`
+     metric - systematic loss must be visible;
+  2. "late" is defined by AGE, not only by order: a frame older than a config value (start ~1-2 s,
+     tuned against the §1.10 latency budget; formal name fixed at C1) is dropped even when it arrives
+     "in order";
+  3. reordering is reserved for the offline M3/replay context, which reconstructs history and makes no
+     live decision.
+- Invariant for M5: after a drop the tracker receives the REAL Δt between effective observations,
+  never a false one-frame Δt.
+- Motivation: injecting a late observation into the tracker is mathematically false (the state has
+  already advanced); it can confirm a track twice or associate an old detection with the current
+  position. In a security system an explicit gap is preferable to a false positive.
+- Type fields (proposed): `FramePacket.capture_mono_ns` (age source); `frames_dropped_stale_total`
+  counter (observability). Offline only: M3 may reorder.
+- Affects: M2 (the reader applies drop-by-age before handing a frame on), M5 (real Δt after a drop).
+
+### D4 Gap policy (outside the Kalman filter)
+- Decision: the Kalman filter covers the GEOMETRY of a gap - `Q(Δt)` inflates the covariance and
+  widens the association gate when the observation returns (already specified in §1.4/§4.1, not
+  redefined here). What the filter does NOT decide is explicit configuration policy:
+  - `track_max_age_s`: maximum seconds without a match before the track expires (a single clock,
+    always monotonic). *Proposed name; reconcile with the guide's `max_missed_seconds` /
+    `max_track_age_seconds` (§1.4) at C1 so one concept keeps one owner.*
+  - `dwell_continuity`, a field of the ZONE RULE (not of the track): `observed_only` counts only time
+    with observation (a gap breaks the streak), `bracketed` counts if there was observation before AND
+    after (the hole sums). Recommended default: `observed_only`.
+  - `expiration_reason`, a track field (e.g. `expired_by_gap`), so M6 knows WHY the track disappeared.
+- Note: a large gap never demonstrates continuous presence; event machines must not invent presence
+  inside observation gaps.
+- Type fields (proposed): `Track.expiration_reason`; config `track_max_age_s`; zone-rule field
+  `dwell_continuity`.
+- Affects: M5 (expiry and `expiration_reason`), M6 (`dwell_continuity`, gap policy).
+
+---
+
 ## C1 Config validation (§1.18) - cross-cutting, start at M1
 - Path: `src/vva_app/config/validate.py`. Each milestone adds the schema of the YAML it introduces.
 - Invariants: Pydantic models (extra="forbid") per YAML; cross-file checks (`detector.confidence_threshold == tracker.low_confidence_threshold`, zone files exist, no unresolved `<...>` placeholders); `same_camera_same_event_seconds` exists only in `notify.yaml` (rejected in `events.yaml`); runs once at startup, config changes need a restart.
@@ -49,15 +112,18 @@ Log rows written to JSONL are NOT redefined: import them from
 - Invariants: newest frame overwrites the slot (no queue growth); exponential-backoff reconnect; stale-data signal after `frame_stale_after_seconds`; monotonic + UTC stamps at read time; credentials never logged (redact `user:pass@`).
 - Required tests: mailbox drops old frames under a slow consumer (fake source); backoff sequence; redaction of URLs in log messages.
 - Verified by: STREAM_PROBE on substream and main stream separately (fps ratio, keyframe interval ~1 s, gaps); PIPELINE_BENCH drop rate.
+- Design decisions: D2 (the reader takes `capture_mono_ns` and `capture_utc` together at read time), D3 (drop by age before handing the frame on).
 - Tier: Flash.
 
 ## M3 Zones, labelling and replay harness (§1.5 zones, §1.11) - milestone 3
 - Path: `configs/zones/<camera_id>.json`, `src/vva_app/eval/replay_runner.py`, config `configs/eval.yaml`.
-- Consumes: recordings, ground-truth CSV with `condition` (`day` / `night_ir`). Produces: precision/recall/F1 per condition with Wilson intervals, per-stage traces.
+- Consumes: recordings, ground-truth CSV with `condition` (`day` / `night_ir`). Produces: precision/recall/F1 per condition with Wilson intervals, and per-stage traces as in-process Python objects (D1).
 - Role (decided 2026-10-02): this harness is the authority for PRODUCTION event validation. It runs the real M6 state machine (and the M8 throttle decision, without sending) over recordings with a fake clock. RULE_REPLAY only compares frame-level detection policies.
+- Traces (D1, decided 2026-10-09): consumed IN PROCESS. The harness imports the real M6 module and reads confirmed tracks and emitted events as Python objects; it serialises no JSONL and creates no `TraceRow`. Discrepancy (M3 per-stage traces) RESOLVED 2026-10-09 by D1: a JSONL trace contract is deferred until the M5/M6 interfaces are implemented and stable; when added it must be a `StrictModel` consistent with `contracts/base.py`. Traceability meanwhile: the report emits the merged-config hash and `n_labeled_events` (§1.11).
 - Invariants: fake clock; matching rule explicit (`one_to_one_greedy_nearest`, window 5 s); held-out days never used for tuning; fail fast on unresolved `<...>` placeholders; `night_ir_insect_activity` must emit zero events.
 - Required tests: Wilson interval against closed-form values; matching rule on a synthetic timeline with known TP/FP/FN; the harness imports `vva_app.events.state_machine` (no re-implementation).
 - Verified by: RULE_REPLAY (alert load vs recall per policy), DATASET_AUDIT before any evaluation.
+- Design decisions: D1 (traces in process), D3 rule 3 (reordering only offline, in replay).
 - Tier: Flash for I/O; Pro for the matching rule and Wilson implementation (T3).
 
 ## M4 Motion gate (§1.2) - milestone 4
@@ -74,6 +140,7 @@ Log rows written to JSONL are NOT redefined: import them from
 - Invariants: F(dt) rebuilt every predict; Q(dt) continuous white-noise block (1/3 dt^3, 1/2 dt^2, dt) times `sigma_accel_sq` (units px^2/s^4); expiry in seconds (`max_missed_seconds`); two-tier association (high 0.45, low 0.15).
 - Required tests: Q(dt) against closed-form values; IoU against hand-computed boxes; identity kept through a short synthetic gap.
 - Verified by: replay harness per-stage traces (confirmed-track stage).
+- Design decisions: D2 (Δt from `capture_mono_ns`), D3 (real Δt between effective observations after a drop), D4 (`track_max_age_s`, `expiration_reason`; gap geometry stays in `Q(Δt)`).
 - Tier: Pro (T3) for F/Q/association; Flash for wiring and config.
 
 ## M6 Event state machine, entry only (§1.5, v11.2) - milestone 6
@@ -93,6 +160,7 @@ Log rows written to JSONL are NOT redefined: import them from
   - Track lost, recovered at +4.9 s -> still in cooldown; state released at +5.0 s after loss.
   - Point-in-polygon on a known shape (vertex, edge and outside cases).
 - Verified by: M3 replay harness on the held-out day (real M6 code). NOT by RULE_REPLAY.
+- Design decisions: D2 (dwell and matching use the frame observation time; never a UTC-minus-monotonic difference), D4 (`dwell_continuity` is a zone-rule field, not a track field; M6 reads `expiration_reason`; gaps never count as presence).
 - Tier: Flash; Pro if the cooldown design changes.
 
 ## M7 Persistence, API, metrics (§1.6, §1.7, §1.10) - milestone 7
