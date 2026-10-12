@@ -8,20 +8,24 @@ Flash = vva-builder alone; Pro = escalate per `dev-escalate-pro` for the marked 
 
 Shared types (create once, in `src/vva_app/common/types.py`, before M1):
 
-| Type | Fields (minimum) | Notes |
+| Type | Fields | Notes |
 |---|---|---|
-| `FramePacket` | `camera_id`, `frame_idx`, `ts_mono`, `ts_utc`, `image` (ndarray) | Both clocks read at capture time |
-| `Detection` | `class_name`, `confidence`, `box_xyxyn` | Original-frame normalised coords (letterbox undone) |
-| `Track` | `track_id`, `class_name`, `box_xyxyn`, `hits`, `is_confirmed`, `last_seen_mono` | `is_confirmed` is the only confirmation signal downstream |
-| `Event` | `event_id`, `camera_id`, `zone_id`, `track_id`, `kind`, `ts_mono`, `ts_utc` | MVP `kind` = `entry` only |
+| `FramePacket` | `camera_id`, `frame_idx`, `capture_mono_ns` (int, ns), `capture_utc` (datetime, UTC), `image` (ndarray) | Both clocks read at ingest (D2); `is_new`/`is_stale` are delivery signals of `get_latest()`, not frame fields (M2/§1.10) |
+| `Detection` | `class_name`, `confidence`, `box_xyxyn` | Original-frame normalised xyxy, letterbox undone; no per-detection timing (the frame carries it) |
+| `Track` | `track_id`, `class_name`, `box_xyxyn`, `hits`, `is_confirmed`, `last_seen_mono` (int, ns), `mean_confidence`, `age_seconds` | `is_confirmed` is the only confirmation signal downstream; `age_seconds` per D6; no `expiration_reason` (deferred to M5, P2) |
+| `Event` | `event_id`, `camera_id`, `zone_id`, `track_id`, `kind`, `capture_mono_ns` (int, ns), `capture_utc` (datetime, UTC) | MVP `kind` = `entry` only; the stamps are the observation time of the emission-condition frame (D5/P1) |
 
-Field names marked *proposed* in the design decisions below (e.g. `capture_mono_ns`, `capture_utc`,
-`track_max_age_s`) refine this minimum. The table above stays the minimum contract; the formal names
-are fixed when `src/vva_app/common/types.py` is written.
+The field list above is the final contract as implemented in `src/vva_app/common/types.py`
+(2026-10-09): `capture_mono_ns` / `capture_utc` replace the earlier `ts_mono` / `ts_utc` (D2), and
+`Track` gains `mean_confidence` / `age_seconds` because the M6 eligibility test reads them. The
+representation is plain frozen dataclasses (the project's choice for the shared types); freezing the
+dataclass does not freeze the NumPy `image` buffer, so consumers treat it as read-only.
 
 ## Design decisions (approved 2026-10-09)
-Cross-cutting decisions taken in review, before the shared types are written. The field names shown
-in `code` are **proposed**; the formal contract is fixed when `common/types.py` is written.
+Cross-cutting decisions taken in review. The field names in the Shared types table above already
+constitute the contract implemented in `src/vva_app/common/types.py`. The decisions below are
+approved, but every item they explicitly defer to C1, M5 or M6 remains pending: implementing the
+types does not approve configuration parameters or policies that those cards still own.
 D1 (M3 traces) is recorded in its own card; D2-D4 follow.
 
 ### D2 Capture clock semantics
@@ -63,18 +67,51 @@ D1 (M3 traces) is recorded in its own card; D2-D4 follow.
 - Decision: the Kalman filter covers the GEOMETRY of a gap - `Q(Δt)` inflates the covariance and
   widens the association gate when the observation returns (already specified in §1.4/§4.1, not
   redefined here). What the filter does NOT decide is explicit configuration policy:
-  - `track_max_age_s`: maximum seconds without a match before the track expires (a single clock,
-    always monotonic). *Proposed name; reconcile with the guide's `max_missed_seconds` /
-    `max_track_age_seconds` (§1.4) at C1 so one concept keeps one owner.*
+  - Track expiry uses the guide's existing `max_missed_seconds` (maximum seconds without a match
+    before the track expires; a single monotonic clock). The earlier proposed name `track_max_age_s`
+    is DROPPED: it described this same concept and would have been a duplicate. The guide's separate
+    `max_track_age_seconds` (a total-lifetime cap listed in `tracker.yaml` with no explanatory text)
+    stays a distinct config concept whose exact meaning is pinned at C1/M5. No third parameter, no alias.
   - `dwell_continuity`, a field of the ZONE RULE (not of the track): `observed_only` counts only time
     with observation (a gap breaks the streak), `bracketed` counts if there was observation before AND
-    after (the hole sums). Recommended default: `observed_only`.
-  - `expiration_reason`, a track field (e.g. `expired_by_gap`), so M6 knows WHY the track disappeared.
+    after (the hole sums). Recommended default: `observed_only`. The threshold that separates a normal
+    inter-frame interval from a continuity-breaking gap is NOT defined by the guide; it is an open M6
+    decision, not a shared-type field.
+  - `expiration_reason`: DEFERRED to M5's design (P2, approved 2026-10-09). Shared types does not
+    carry it, neither as a `Literal` nor as `str | None`. M5 must define the relevant expiry/
+    disappearance reasons, their representation and producer, and how (whether) M6 consumes them.
 - Note: a large gap never demonstrates continuous presence; event machines must not invent presence
-  inside observation gaps.
-- Type fields (proposed): `Track.expiration_reason`; config `track_max_age_s`; zone-rule field
-  `dwell_continuity`.
-- Affects: M5 (expiry and `expiration_reason`), M6 (`dwell_continuity`, gap policy).
+  inside observation gaps. Deferring `expiration_reason` does NOT relax this policy or any other part
+  of D4.
+- Affects: M5 (expiry), M6 (`dwell_continuity`, gap policy).
+
+### D5 Event timestamp semantics (P1, approved 2026-10-09)
+- Decision: the primary stamps of `Event` (`capture_mono_ns`, `capture_utc`) are the observation time
+  of the frame at which M6 determines the emission conditions hold. They are copied from that frame's
+  `FramePacket` stamps and therefore follow D2.
+- They are NOT: the real execution instant when the event object is built or published; nor the first
+  observed entry into the zone if that happened earlier.
+- If a future contract adds `observed_at` / `emitted_at`, the meanings stay separate: `observed_at` is
+  the observation time of the frame satisfying the condition, `emitted_at` the real emission instant.
+  This decision adds no `emitted_at` and no first-entry field; M6 emission logic is out of scope.
+- Affects: M6 (produces it); M7/M8 (persistence and throttling use the execution clock, not this).
+
+### D6 Track age and last-seen semantics (approved 2026-10-09)
+- `Track.age_seconds` (option a): monotonic seconds from the first observation that created the track up
+  to the logical time of the observation/update the snapshot represents. Computed from marks of the same
+  temporal domain; in replay it uses the replayed logical time, not real execution duration. It does NOT
+  reset when `is_confirmed` becomes true, and it is NOT time-without-observation nor zone dwell. It can
+  grow during a gap while the track stays alive; that growth does not attest continuous presence. M5
+  computes it.
+- `Track.last_seen_mono`: nanoseconds, same domain as `FramePacket.capture_mono_ns`, of the observation
+  time of the last SUCCESSFULLY ASSOCIATED frame. It is neither the execution instant of the match nor
+  the time of a Kalman prediction. Name unchanged.
+- Runtime validation: `age_seconds` must be finite and `>= 0`; `Detection.box_xyxyn` must be finite,
+  ordered and inside `[0, 1]`; `Track.box_xyxyn` must be finite and ordered (no `[0, 1]` range).
+- Open (M5): how a predicted box that leaves the frame is represented. The card does not define it, so
+  the shared type imposes no `[0, 1]` range and no clipping on `Track.box_xyxyn`; pinning that
+  representation is M5's decision.
+- Affects: M5 (computes age/last-seen), M6 (eligibility reads `age_seconds`).
 
 ---
 
@@ -140,7 +177,7 @@ Log rows written to JSONL are NOT redefined: import them from
 - Invariants: F(dt) rebuilt every predict; Q(dt) continuous white-noise block (1/3 dt^3, 1/2 dt^2, dt) times `sigma_accel_sq` (units px^2/s^4); expiry in seconds (`max_missed_seconds`); two-tier association (high 0.45, low 0.15).
 - Required tests: Q(dt) against closed-form values; IoU against hand-computed boxes; identity kept through a short synthetic gap.
 - Verified by: replay harness per-stage traces (confirmed-track stage).
-- Design decisions: D2 (Δt from `capture_mono_ns`), D3 (real Δt between effective observations after a drop), D4 (`track_max_age_s`, `expiration_reason`; gap geometry stays in `Q(Δt)`).
+- Design decisions: D2 (Δt from `capture_mono_ns`), D3 (real Δt between effective observations after a drop), D4 (`max_missed_seconds` expiry; gap geometry stays in `Q(Δt)`), P2 (M5 must define the expiry reasons, their representation and producer, and how M6 consumes them), D6 (age/last-seen semantics; open: representation of predicted boxes outside the frame - no clipping imposed).
 - Tier: Pro (T3) for F/Q/association; Flash for wiring and config.
 
 ## M6 Event state machine, entry only (§1.5, v11.2) - milestone 6
@@ -160,7 +197,7 @@ Log rows written to JSONL are NOT redefined: import them from
   - Track lost, recovered at +4.9 s -> still in cooldown; state released at +5.0 s after loss.
   - Point-in-polygon on a known shape (vertex, edge and outside cases).
 - Verified by: M3 replay harness on the held-out day (real M6 code). NOT by RULE_REPLAY.
-- Design decisions: D2 (dwell and matching use the frame observation time; never a UTC-minus-monotonic difference), D4 (`dwell_continuity` is a zone-rule field, not a track field; M6 reads `expiration_reason`; gaps never count as presence).
+- Design decisions: D2 (dwell and matching use the frame observation time; never a UTC-minus-monotonic difference), D4 (`dwell_continuity` is a zone-rule field, not a track field; gaps never count as presence), D5 (event stamps are the observation time of the emission-condition frame), D6 (`age_seconds` option a, not reset on confirmation).
 - Tier: Flash; Pro if the cooldown design changes.
 
 ## M7 Persistence, API, metrics (§1.6, §1.7, §1.10) - milestone 7
