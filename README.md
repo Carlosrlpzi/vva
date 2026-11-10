@@ -22,7 +22,7 @@ enriquecimiento asíncrono posterior al evento.
 | `tests/` | Pruebas del paquete de medición y `test_skills_consistency.py` |
 | `schemas/` | JSON Schemas generados con `vva schemas --output schemas` (la fuente de verdad son los modelos Pydantic) |
 | `examples/` | Workspace sintético para las 6 tareas (`python tests/builders.py examples`) |
-| `context/`, `archive/` | Material del paquete anterior (ML tabular) y skills de OpenClaw archivadas, sin modificar |
+| `context/`, `archive/` | Material del paquete anterior (ML tabular) y skills de OpenClaw archivadas, sin modificar, y actualmente ya no seguidas por git.|
 
 ## Mapa de paquetes de `vva_app` (hitos de la guía)
 
