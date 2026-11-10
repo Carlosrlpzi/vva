@@ -25,6 +25,8 @@
     "doom_loop": "ask"
   },
   "agent": {
+    "build": { "disable": true},
+    "plan": { "disable": true},
     "vva-builder": {
       "description": "Implements VVA MVP modules on Flash; delegates hard design/debug/perf work to vva-pro",
       "mode": "primary",
@@ -44,6 +46,9 @@
           "AGENTS.md": "deny",
           "prompts/*": "deny",
           ".opencode/*": "deny",
+          ".githooks/*": "deny",
+          ".githooks/*": "deny",
+          ".vva/*": "deny",
           "tests/test_skills_consistency.py": "deny",
           "*.env": "deny"
         },
@@ -116,6 +121,34 @@
         "grep": "allow",
         "skill": { "*": "deny", "vva-*": "allow" },
         "vva_contract": "ask"
+      }
+    },
+    "vva-audit": {
+      "description": "Claude Opus auditor: architectural review, code quality supervision, and cross-validation of DeepSeek changes. Read-only, never edits.",
+      "mode": "primary",
+      "model": "anthropic/claude-opus-5-5",
+      "prompt": "{file:./prompts/vva-audit.md}",
+      "steps": 30,
+      "permission": {
+        "*": "deny",
+        "read": { "*": "allow", "*.env": "deny", "*.env.*": "deny", "*.env.example": "allow" },
+        "glob": "allow",
+        "grep": "allow",
+        "list": "allow",
+        "skill": { "*": "deny", "dev-*": "allow" },
+        "bash": {
+          "*": "deny",
+          "git diff*": "allow",
+          "git log*": "allow",
+          "git show*": "allow",
+          "git status*": "allow",
+          "pytest*": "ask",
+          "python -m pytest*": "ask"
+        },
+        "edit": "deny",
+        "task": "deny",
+        "webfetch": "deny",
+        "websearch": "deny"
       }
     }
   }

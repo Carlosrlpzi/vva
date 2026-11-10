@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# pre-push hook: runs the vva-audit agent on the commits about to be pushed.
+#
+# - Blocks the push only when the auditor returns VERDICT: REQUEST_CHANGES.
+# - Saves every report under .vva/audits/ (add .vva/ to .gitignore).
+# - Bypass deliberately with: git push --no-verify
+# - Skip without bypassing other hooks: VVA_AUDIT=0 git push
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+
+set -euo pipefail
+
+if [[ "${VVA_AUDIT:-1}" == "0" ]]; then
+  echo "[vva-audit] skipped (VVA_AUDIT=0)" >&2
+  exit 0
+fi
+
+# OpenCode runs as the isolated user "opencode-dev" (it owns the credentials in its own
+# ~/.local/share/opencode/auth.json). The hook runs as the human user, so it delegates
+# through a root-owned wrapper allowed by a narrow sudoers rule.
+# -n: never prompt for a password; if sudo is not configured, fail (and block the push).
+AUDIT_CMD=(sudo -n -H -u opencode-dev /usr/local/bin/vva-audit-run)
+ZERO_SHA="0000000000000000000000000000000000000000"
+REPORT_DIR=".vva/audits"
+mkdir -p "$REPORT_DIR"
+
+status=0
+
+# Git feeds one line per ref being pushed: <local ref> <local sha> <remote ref> <remote sha>
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # Deleting a remote branch: nothing to audit.
+  [[ "$local_sha" == "$ZERO_SHA" ]] && continue
+
+  if [[ "$remote_sha" == "$ZERO_SHA" ]]; then
+    # New branch on the remote: audit commits not reachable from the default branch.
+    base="$(git merge-base "$local_sha" origin/main 2>/dev/null || git rev-list --max-parents=0 "$local_sha" | tail -n 1)"
+    range="${base}..${local_sha}"
+  else
+    range="${remote_sha}..${local_sha}"
+  fi
+
+  # Nothing new in this ref.
+  [[ -z "$(git rev-list "$range")" ]] && continue
+
+  report="${REPORT_DIR}/$(date +%Y%m%d-%H%M%S)-${local_sha:0:8}.md"
+  echo "[vva-audit] auditing ${range} -> ${report}" >&2
+
+  # Non-interactive run: permission requests marked "ask" (pytest) are rejected,
+  # so the hook audits statically. Explicit deny rules always remain enforced.
+  # Ranges are passed as full SHAs so the wrapper can validate them strictly.
+  if ! "${AUDIT_CMD[@]}" "$range" < /dev/null > "$report"; then
+    echo "[vva-audit] opencode failed; see ${report}. Push blocked." >&2
+    status=1
+    continue
+  fi
+
+  verdict="$(grep -E '^VERDICT: (APPROVE|APPROVE_WITH_CHANGES|REQUEST_CHANGES)$' "$report" | tail -n 1 || true)"
+
+  case "$verdict" in
+    "VERDICT: APPROVE"|"VERDICT: APPROVE_WITH_CHANGES")
+      echo "[vva-audit] ${verdict} (${local_ref})" >&2
+      ;;
+    "VERDICT: REQUEST_CHANGES")
+      echo "[vva-audit] ${verdict} (${local_ref}). Read ${report}. Push blocked." >&2
+      status=1
+      ;;
+    *)
+      # Fail closed: a report without a parseable verdict is not an approval.
+      echo "[vva-audit] no valid VERDICT line in ${report}. Push blocked." >&2
+      status=1
+      ;;
+  esac
+done
+
+exit "$status"
