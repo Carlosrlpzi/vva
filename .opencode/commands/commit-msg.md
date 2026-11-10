@@ -24,3 +24,4 @@ Steps:
 4. After the block, one line with any doubt (e.g. why chore and not feat).
 
 Extra context from the user: $ARGUMENTS
+
