@@ -32,10 +32,28 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   [[ "$local_sha" == "$ZERO_SHA" ]] && continue
 
   if [[ "$remote_sha" == "$ZERO_SHA" ]]; then
-    # New branch on the remote: audit commits not reachable from the default branch.
-    base="$(git merge-base "$local_sha" origin/main 2>/dev/null || git rev-list --max-parents=0 "$local_sha" | tail -n 1)"
+    # New branch on the remote: audit commits not reachable from origin's default branch.
+    # No fallback to the root commit: auditing the whole history exceeds the agent's
+    # step budget and would only produce a report without a verdict.
+    default_ref="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+    if [[ -z "$default_ref" ]]; then
+      echo "[vva-audit] cannot resolve origin's default branch. Run: git remote set-head origin -a" >&2
+      status=1
+      continue
+    fi
+    if ! base="$(git merge-base "$local_sha" "$default_ref")"; then
+      echo "[vva-audit] no common ancestor with ${default_ref}. Push blocked." >&2
+      status=1
+      continue
+    fi
     range="${base}..${local_sha}"
   else
+    # The remote tip must exist locally, otherwise rev-list fails with an unclear error.
+    if ! git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+      echo "[vva-audit] remote commit ${remote_sha:0:8} not found locally. Run: git fetch" >&2
+      status=1
+      continue
+    fi
     range="${remote_sha}..${local_sha}"
   fi
 
@@ -54,7 +72,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     continue
   fi
 
-  verdict="$(grep -E '^VERDICT: (APPROVE|APPROVE_WITH_CHANGES|REQUEST_CHANGES)$' "$report" | tail -n 1 || true)"
+  # Only the LAST non-empty line counts. A report that merely quotes a VERDICT line in its
+  # body, or one cut off before the real verdict, must not pass (fail closed).
+  verdict="$(grep -v '^[[:space:]]*$' "$report" | tail -n 1 | tr -d '\r' || true)"
 
   case "$verdict" in
     "VERDICT: APPROVE"|"VERDICT: APPROVE_WITH_CHANGES")
