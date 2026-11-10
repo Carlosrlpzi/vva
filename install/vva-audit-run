@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# /usr/local/bin/vva-audit-run
+#
+# Runs the vva-audit agent as the isolated user "opencode-dev".
+# Invoked by .githooks/pre-push through:  sudo -n -H -u opencode-dev /usr/local/bin/vva-audit-run <range>
+#
+# Install (root-owned, so neither carlosr nor opencode-dev can modify it):
+#   sudo install -o root -g root -m 0755 vva-audit-run /usr/local/bin/vva-audit-run
+#
+# Why a wrapper instead of allowing "npx ..." in sudoers:
+#   sudoers would then let the human user run ANY npx command as opencode-dev.
+#   This script fixes the repo, the agent, the command and the OpenCode version,
+#   and accepts only a strictly validated git range as input.
+
+set -euo pipefail
+
+REPO="/srv/pi-vision"
+OPENCODE_VERSION="1.18.34"
+
+# Absolute path to npx as seen by opencode-dev. Fill it from:
+#   sudo -iu opencode-dev which npx
+NPX="/home/opencode-dev/.nvm/versions/node/v24.21.0/bin/npx"
+
+range="${1:-}"
+if [[ ! "$range" =~ ^[0-9a-f]{40}\.\.[0-9a-f]{40}$ ]]; then
+  echo "vva-audit-run: expected <40-hex-sha>..<40-hex-sha>, got: '${range}'" >&2
+  exit 2
+fi
+
+if [[ "$(id -un)" != "opencode-dev" ]]; then
+  echo "vva-audit-run: must run as opencode-dev" >&2
+  exit 4
+fi
+
+# npx is a Node script; make sure its own node is on PATH (nvm-style installs).
+export PATH="$(dirname "$NPX"):/usr/local/bin:/usr/bin:/bin"
+
+ENV_FILE="/home/opencode-dev/.config/vva/deepseek.env"
+if [[ ! -r "$ENV_FILE" ]]; then
+  echo "vva-audit-run: missing ${ENV_FILE}" >&2
+  exit 3
+fi
+set -a
+source "$ENV_FILE"
+set +a
+
+cd "$REPO"
+exec "$NPX" --yes "opencode-ai@${OPENCODE_VERSION}" run --agent vva-audit --command audit "$range"

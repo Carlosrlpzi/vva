@@ -1,0 +1,6 @@
+# /etc/sudoers.d/vva-audit
+# Lets carlosr run ONLY the audit wrapper as opencode-dev, without a password.
+# Install with:
+#   sudo install -o root -g root -m 0440 vva-audit.sudoers /etc/sudoers.d/vva-audit
+#   sudo visudo -cf /etc/sudoers.d/vva-audit
+carlosr ALL=(opencode-dev) NOPASSWD: /usr/local/bin/vva-audit-run
