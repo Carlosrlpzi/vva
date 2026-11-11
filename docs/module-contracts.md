@@ -134,6 +134,25 @@ Log rows written to JSONL are NOT redefined: import them from
 - Required tests: the guide's worked table (4.0 mm, 5 m, 1/3", 640x360 -> ~163 px) reproduced within rounding.
 - Verified by: measured pixel height of a person at the zone boundary (manual), DATASET_AUDIT `box_sizes`.
 - Tier: Flash.
+- Increment implemented 2026-10-13 (Flash): geometric core only, in `src/vva_app/tools/pixel_budget.py`
+  and `tests/test_pixel_budget.py`. The card is NOT complete or validated on hardware.
+  - The "frame" behind `P_h` and the letterbox input is the image that ENTERS the letterbox
+    (the frame the model receives), not the sensor or main-stream resolution. When the detector
+    runs on a substream, pass the substream dimensions as `image_width_px`/`image_height_px`.
+  - IR range is evaluated separately (`ir_range_status`) and never replaces `D` in the geometry;
+    the card's "night limited by IR range" is not implemented as `min(D, IR)`.
+  - The 640x640 input size is the single constant `MODEL_INPUT_SIZE_PX`, exposed as an
+    overridable keyword; the formula is unchanged.
+- Pending before M0 can be declared complete (out of this increment):
+  - YAML integration and recording values in `configs/cameras/<id>.yaml`.
+  - Completing the manual measurement context: sensor height, laser error margin, and
+    measurements at several frame positions (centre and periphery).
+  - Converting ground distance plus mounting height into camera distance.
+  - Documented evidence that the substream is the main stream stretched, not a crop (today a
+    reported datum only).
+  - Confirming the compiled model's input size.
+  - Night verification.
+  - The audit indicated by the card.
 
 ## M1 Detector on Hailo-10H (§1.3) - milestone 1
 - Path: `src/vva_app/inference/detector.py`, config `configs/models.yaml` (owner of `confidence_threshold`, `nms_iou_threshold`, `input_size`, `hef_path`).
