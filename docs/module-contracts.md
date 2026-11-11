@@ -128,26 +128,30 @@ Log rows written to JSONL are NOT redefined: import them from
 
 ## M0 Pixel budget (§0) - milestone 0
 - Path: `src/vva_app/tools/pixel_budget.py` + values recorded in `configs/cameras/<id>.yaml`.
-- Consumes: image height P_h, focal length f, sensor height S_h, target height H, distance D, IR range.
-- Produces: `h_px = P_h * f * H / (D * S_h)` per camera and zone boundary, day and night (night limited by IR range); letterbox scale to 640x640.
-- Invariants: same length units for H and D; letterbox scale = min(640/W, 640/H_img).
-- Required tests: the guide's worked table (4.0 mm, 5 m, 1/3", 640x360 -> ~163 px) reproduced within rounding.
+- Consumes: frame width/height of the array fed to letterbox, vertical FOV, target height H, zone distance D, h_min_px, IR range.
+- Produces, per zone: model-input h_px at the zone boundary (day); the optical floor
+  distance for a given h_min_px; and a night boundary = min(optical floor, IR range)
+  with its limiting factor (optical | ir_range). Night coverage is not evaluated (all
+  night fields null) when IR range is not provided. Frame dimensions are those of the
+  array fed to letterbox; focal length uses vertical FOV. All distances are slant
+  (line-of-sight) distances — PROVISIONAL convention pending field validation.
+- Invariants: same length units for H and D; letterbox scale = input_size_px / max(W, H_img); focal length from vertical FOV.
+- Required tests: the hand-computable M0 fixture (720x576 frame, vfov = 2*atan(0.5), 640 px input, 1.7 m target, h_min 32 px) reproduced within rounding.
 - Verified by: measured pixel height of a person at the zone boundary (manual), DATASET_AUDIT `box_sizes`.
 - Tier: Flash.
 - Increment implemented 2026-10-13 (Flash): geometric core only, in `src/vva_app/tools/pixel_budget.py`
   and `tests/test_pixel_budget.py`. The card is NOT complete or validated on hardware.
-  - The "frame" behind `P_h` and the letterbox input is the image that ENTERS the letterbox
+  - The "frame" behind the letterbox input is the image that ENTERS the letterbox
     (the frame the model receives), not the sensor or main-stream resolution. When the detector
-    runs on a substream, pass the substream dimensions as `image_width_px`/`image_height_px`.
-  - IR range is evaluated separately (`ir_range_status`) and never replaces `D` in the geometry;
-    the card's "night limited by IR range" is not implemented as `min(D, IR)`.
+    runs on a substream, pass the substream dimensions as `frame_width_px`/`frame_height_px`.
   - The 640x640 input size is the single constant `MODEL_INPUT_SIZE_PX`, exposed as an
     overridable keyword; the formula is unchanged.
 - Pending before M0 can be declared complete (out of this increment):
   - YAML integration and recording values in `configs/cameras/<id>.yaml`.
   - Completing the manual measurement context: sensor height, laser error margin, and
     measurements at several frame positions (centre and periphery).
-  - Converting ground distance plus mounting height into camera distance.
+  - Field validation of the PROVISIONAL slant-distance convention: ground distance plus
+    mounting height -> camera distance, via `slant_distance_m`.
   - Documented evidence that the substream is the main stream stretched, not a crop (today a
     reported datum only).
   - Confirming the compiled model's input size.
