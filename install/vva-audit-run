@@ -7,19 +7,26 @@
 # Install (root-owned, so neither carlosr nor opencode-dev can modify it):
 #   sudo install -o root -g root -m 0755 vva-audit-run /usr/local/bin/vva-audit-run
 #
-# Why a wrapper instead of allowing "npx ..." in sudoers:
-#   sudoers would then let the human user run ANY npx command as opencode-dev.
+# Why a wrapper instead of allowing "opencode ..." in sudoers:
+#   sudoers would then let the human user run ANY opencode command as opencode-dev.
 #   This script fixes the repo, the agent, the command and the OpenCode version,
 #   and accepts only a strictly validated git range as input.
 
 set -euo pipefail
 
 REPO="/srv/pi-vision"
-OPENCODE_VERSION="1.18.34"
 
-# Absolute path to npx as seen by opencode-dev. Fill it from:
-#   sudo -iu opencode-dev which npx
-NPX="/home/opencode-dev/.nvm/versions/node/v24.21.0/bin/npx"
+# OpenCode is installed for opencode-dev as a standalone binary (official install
+# script), not through node/npx: opencode-dev has no node at all. Find it with:
+#   sudo -iu opencode-dev bash -ic 'command -v opencode'
+OPENCODE_BIN="/home/opencode-dev/.opencode/bin/opencode"
+
+# Pinned version. npx used to enforce the pin by downloading exactly this version;
+# a standalone binary self-updates, so the pin is now enforced by checking it
+# (fail closed): an unreviewed upgrade must not run the auditor silently.
+# Read the installed one with:
+#   sudo -iu opencode-dev ~/.opencode/bin/opencode --version
+OPENCODE_VERSION="1.19.5"
 
 range="${1:-}"
 if [[ ! "$range" =~ ^[0-9a-f]{40}\.\.[0-9a-f]{40}$ ]]; then
@@ -32,8 +39,19 @@ if [[ "$(id -un)" != "opencode-dev" ]]; then
   exit 4
 fi
 
-# npx is a Node script; make sure its own node is on PATH (nvm-style installs).
-export PATH="$(dirname "$NPX"):/usr/local/bin:/usr/bin:/bin"
+if [[ ! -x "$OPENCODE_BIN" ]]; then
+  echo "vva-audit-run: opencode binary not found at ${OPENCODE_BIN}" >&2
+  exit 5
+fi
+
+installed="$("$OPENCODE_BIN" --version 2>/dev/null | tr -d '[:space:]' || true)"
+if [[ "$installed" != "$OPENCODE_VERSION" ]]; then
+  echo "vva-audit-run: opencode ${installed:-unknown} installed, ${OPENCODE_VERSION} pinned." >&2
+  echo "vva-audit-run: review the upgrade, then update OPENCODE_VERSION in install/vva-audit-run and reinstall." >&2
+  exit 6
+fi
+
+export PATH="${OPENCODE_BIN%/*}:/usr/local/bin:/usr/bin:/bin"
 
 ENV_FILE="/home/opencode-dev/.config/vva/deepseek.env"
 if [[ ! -r "$ENV_FILE" ]]; then
@@ -45,4 +63,4 @@ source "$ENV_FILE"
 set +a
 
 cd "$REPO"
-exec "$NPX" --yes "opencode-ai@${OPENCODE_VERSION}" run --agent vva-audit --command audit "$range"
+exec "$OPENCODE_BIN" run --agent vva-audit --command audit "$range"
