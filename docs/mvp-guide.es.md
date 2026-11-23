@@ -140,6 +140,16 @@ Decisión del dueño del proyecto: aunque todavía no hay una segunda instalaci�
 6. **Ninguna ruta absoluta en los defaults (§1.12, §1.13).** `/mnt/ssd/...` sale de `pre_roll.yaml` y `hardening.yaml` y pasa a `site.yaml`; `/etc/camera/notify.env` pasa a ser `/etc/vva/site/secrets.env`.
 7. **La licencia pasa de nota a compuerta (§1.3, §1.13, §3).** El repositorio ya es público y no tiene archivo `LICENSE`, así que la nota «decídelo antes de publicar» quedó desfasada. Se agrega una compuerta explícita: ninguna instalación en un dispositivo que no sea del dueño del proyecto, ni ningún uso comercial, hasta decidir entre (a) cumplir AGPL-3.0 publicando el proyecto completo bajo esa licencia, (b) una licencia Enterprise de Ultralytics, o (c) un detector con licencia permisiva compilado para el Hailo-10H.
 
+### v11.4 — Correcciones de la auditoría previa al push del paquete de sitio (23 de nov. de 2026)
+
+Correcciones de la revisión de `vva-audit` sobre v11.3. Ninguna funcionalidad nueva: cada punto cierra una brecha entre lo que prometía la prosa y lo que hacían el código de referencia o las unidades.
+
+1. **La regla 2 ya no rechaza `/metrics` (§1.18).** Trataba cualquier default que empezara con "/" como ruta del sistema de archivos, así que el `observability.metrics_endpoint: /metrics` publicado hacía fallar todos los arranques. Ahora prueba `Path(v).is_absolute()` por clave y exime por clave las rutas de URL declaradas (`NON_FS_KEYS`), así que una ruta absoluta nueva sigue fallando.
+2. **Las sobrescrituras del sitio son una lista blanca explícita (§1.4, §1.18, §1.19).** v11.3 aceptaba cualquier clave existente, en contra de la nota de §1.4 (solo las dos claves en píxeles) y del invariante 4 de `AGENTS.md`. `tracker.yaml` declara ahora `site_overridable`; cualquier otra sobrescritura falla. Se deja escrito que `validate_config()` corre sobre la configuración combinada.
+3. **Todos los secretos se revisan al arrancar (§1.18).** Credenciales ONVIF, los canales de notificación habilitados, el dead-man's switch y `VVA_API_TOKEN`, no solo las URLs de stream. Todos los nombres faltantes se reportan juntos, nunca sus valores.
+4. **`aspect_correction` se valida contra su enum (§0, §1.18).** `undecided` pasaba la validación.
+5. **Unidades generadas desde el sitio y un `notify.env` aparte (§1.13, §1.19).** La unidad de alerta tenía fija la ruta por defecto del sitio y cargaba todos los secretos para leer una sola URL. `*.env` está ahora en `.gitignore`, y las plantillas `*.env.example` sí se commitean.
+
 ---
 
 ## 0. Verificación previa al arranque: el presupuesto de píxeles
@@ -211,7 +221,7 @@ camera:
     night: {distance_m: <min(optical, ir_range)>, person_height_px: <measured>}
 ```
 
-Los marcadores `<...>` son intencionales: el validador de §1.18 se niega a arrancar mientras alguno siga sin llenarse, igual que hace el banco con `eval.yaml` (§1.11, v9).
+Los marcadores `<...>` son intencionales: el validador de §1.18 se niega a arrancar mientras alguno siga sin llenarse, igual que hace el banco con `eval.yaml` (§1.11, v9). `aspect_correction: undecided` no es un marcador `<...>`, pero falla igual: §1.18 solo acepta `none` o `square_pixels` (v11.4).
 
 **Criterio de salida:** una altura en píxeles medida para una persona de pie en el límite de la zona de cada cámara, registrada en el perfil de cámara del paquete de sitio (§1.19, v11.3) junto con el polígono de zona y la SAR del substream, y una decisión escrita sobre lente/resolución/modelo antes de que inicie el hito 1 — cubriendo tanto el caso diurno como el caso nocturno limitado por el alcance del IR.
 
@@ -467,6 +477,7 @@ tracker:
   high_confidence_threshold: 0.45
   class_aware_matching: true
   tracked_classes: [person]
+  site_overridable: [max_centroid_distance_px, kalman_sigma_accel_sq]   # v11.4: the ONLY keys a site may override (§1.18, §1.19) — pixel-space until §4.2
 ```
 
 Un track solo se vuelve `confirmed` (`track.is_confirmed = true`, elegible para disparar eventos) después de `min_confirmed_hits` coincidencias exitosas — esto es lo que reemplaza la vieja regla naíf de conteo de fotogramas con algo que efectivamente modela la identidad a lo largo del tiempo, y ahora es el *único* lugar donde se define este umbral.
@@ -475,7 +486,7 @@ Un track solo se vuelve `confirmed` (`track.is_confirmed = true`, elegible para 
 
 **Corrección v7 — el valor de v6 de `30.0` se derivó de una aritmética que contradecía su propia afirmación, y es aproximadamente dos órdenes de magnitud demasiado pequeño.** v6 afirmaba que una aceleración de píxeles "del orden de decenas de px/s²" implica una varianza "en las decenas de px²/s⁴" — pero elevar al cuadrado una cantidad en las decenas produce centenas a miles, no decenas; ese paso era simplemente incorrecto. Rederivar a partir de la propia tabla de presupuesto de píxeles de §0 da un rango de partida defendible en lugar de uno adivinado. El lente de 4.0 mm de §0 a 15 m ubica a una persona de 1.7 m en ~54 px, una escala de ~54 / 1.7 ≈ 32 px/m; una persona caminando que cambia de ritmo o dirección acelera aproximadamente a 1–2 m/s², así que a esa distancia la aceleración aparente en píxeles es del orden de ~32 × 1.5 ≈ 48 px/s², y \(\sigma_a^2 \approx 48^2 \approx 2{,}300\) px²/s⁴. A la distancia de 5 m del mismo lente, §0 da ~163 px, una escala de ~163 / 1.7 ≈ 96 px/m, así que la misma aceleración física de 1–2 m/s² es ~144 px/s² y \(\sigma_a^2 \approx 144^2 \approx 21{,}000\) px²/s⁴. La escala — y por lo tanto la varianza defendible — depende de la distancia a la cámara, así que trata **10³–10⁴ px²/s⁴** como el rango de partida que la geometría de zona de este proyecto realmente respalda, no una única constante. Fija **`kalman_sigma_accel_sq: 2000.0`** (configuración de §1.4) como punto de partida para que el banco de §1.11 lo ajuste — un valor de rango medio para una persona rastreada a distancia de zona moderada — en lugar del aritméticamente insostenible `30.0`. Un valor tan pequeño reproduce exactamente el fallo de covarianza sobreconfiada que describe §4.1: hace que el filtro esté *más* seguro de lo que debería sobre la posición después de un \(\Delta t\) largo, estrechando la puerta de asociación por IoU y disparando el mismo síntoma de ruptura de identidad/alerta duplicada que motivó en primer lugar la corrección de \(\Delta t^3\) — que es exactamente el modo de falla al que un valor dos órdenes de magnitud demasiado pequeño habría regresado directamente.
 
-**Nota v11.3 — dos parámetros de este bloque dependen de la casa, no del algoritmo.** `max_centroid_distance_px` y `kalman_sigma_accel_sq` viven en espacio de píxeles, así que su valor correcto depende del lente, de la altura de montaje y de la distancia a la zona: la derivación v7 de arriba los ata a la geometría de §0 de esta cámara. Hasta que §4.2 los lleve a metros, un sitio puede sobrescribirlos en su paquete (§1.19), y el arranque registra cada clave sobrescrita para que esa desviación quede visible en lugar de esconderse en un YAML editado a mano. Después de §4.2, sus versiones métricas son defaults comunes a todas las casas.
+**Nota v11.3 — dos parámetros de este bloque dependen de la casa, no del algoritmo.** `max_centroid_distance_px` y `kalman_sigma_accel_sq` viven en espacio de píxeles, así que su valor correcto depende del lente, de la altura de montaje y de la distancia a la zona: la derivación v7 de arriba los ata a la geometría de §0 de esta cámara. Hasta que §4.2 los lleve a metros, un sitio puede sobrescribirlos en su paquete (§1.19), y el arranque registra cada clave sobrescrita para que esa desviación quede visible en lugar de esconderse en un YAML editado a mano. Después de §4.2, sus versiones métricas son defaults comunes a todas las casas. **v11.4:** ese permiso ahora es explícito: el `site_overridable` de este bloque lista exactamente estas dos claves y §1.18 rechaza la sobrescritura de cualquier otra, así que una casa no puede cambiar `min_confirmed_hits` ni romper la igualdad de `confidence_threshold` desde su paquete. Cuando llegue §4.2, la lista queda vacía.
 
 **Deeper reading:**
 - [ByteTrack (ECCV 2022) on GitHub](https://github.com/FoundationVision/ByteTrack) — la idea de "asociar cada caja de detección" y sus números de precisión reportados en MOT17
@@ -970,23 +981,53 @@ pre_roll:
 - **Notificación de fallas fuera de proceso (v11).** `Restart=`/`WatchdogSec=` arriba *se recuperan* de un cierre inesperado o bloqueo; nada lo *reporta*, porque el único consumidor de notificaciones (§1.14, v9) vive dentro del proceso que acaba de morir — y una vez que se agota `StartLimitBurst`, la unidad se queda en estado `failed` indefinidamente sin que se le avise a nadie. Añade `OnFailure=camera-alert@%n.service` a la unidad de la canalización: systemd activa esa unidad de un solo disparo (oneshot) cada vez que la canalización entra en estado `failed` (un cierre inesperado, un bloqueo detectado por el watchdog, y el agotamiento final del límite de reinicios todos pasan por `failed` bajo el `RestartMode=normal` predeterminado), y la unidad oneshot entrega un webhook desde fuera del proceso fallido. Esto cubre "el proceso no se está ejecutando"; **no** cubre pérdida de energía, pérdida de red, o un kernel bloqueado, ya que systemd mismo desaparece en esos casos — ver el interruptor de hombre muerto en §1.14, que cubre exactamente ese conjunto disjunto.
 
   ```ini
-  # /etc/systemd/system/camera-pipeline.service — [Unit] section addition (v11)
+  # install/systemd/camera-pipeline.service.in — fragment (v11, v11.4); rendered into /etc/systemd/system/ by install/render-units.sh
   [Unit]
   OnFailure=camera-alert@%n.service
 
-  # /etc/systemd/system/camera-alert@.service (v11) — runs outside the failed process
+  [Service]
+  # v11.4: the app's VVA_SITE_DIR and both secret files come from ONE rendered value, so they cannot diverge.
+  Environment=VVA_SITE_DIR=@VVA_SITE_DIR@
+  EnvironmentFile=@VVA_SITE_DIR@/secrets.env
+  EnvironmentFile=@VVA_SITE_DIR@/notify.env
+
+  # install/systemd/camera-alert@.service.in (v11, v11.4) — runs outside the failed process
   [Unit]
   Description=Out-of-process failure alert for %i
 
   [Service]
   Type=oneshot
-  # VVA_NOTIFY_WEBHOOK_URL — per-site secret from the site bundle (§1.19, v11.3), never committed.
+  # v11.4: notify.env holds only VVA_NOTIFY_WEBHOOK_URL (least privilege: no camera credentials, no VVA_API_TOKEN).
   # v11 fix: systemd does NOT support trailing/inline comments on a unit directive —
   # anything after `EnvironmentFile=<path>` on the same line becomes part of the path
   # value, so the line below must carry no comment of its own.
-  EnvironmentFile=/etc/vva/site/secrets.env
+  EnvironmentFile=@VVA_SITE_DIR@/notify.env
   ExecStart=/usr/bin/curl -fsS -d "%i entered failed state on %H" "${VVA_NOTIFY_WEBHOOK_URL}"
   ```
+
+- **Corrección v11.4 — las unidades se generan desde el sitio, no se escriben a mano.** v11.3 dejó fija la ruta `/etc/vva/site/secrets.env` en la unidad de alerta, pero §1.19 permite que `VVA_SITE_DIR` apunte a otro lugar: con un paquete en otra ruta, la unidad de alerta arrancaba sin la URL del webhook y la alerta de caída se perdía justo cuando hacía falta. systemd no puede leer `VVA_SITE_DIR` para resolver una ruta de `EnvironmentFile=`, así que la ruta tiene que quedar fija al escribir el archivo de la unidad, y una persona editando varias unidades a mano es justo el error que hay que quitar. El repositorio guarda plantillas (`install/systemd/*.service.in`) y la instalación las genera a partir del único directorio del sitio, que además pasa a ser el `VVA_SITE_DIR` de la aplicación. La misma corrección aplica el mínimo privilegio: la unidad de alerta lee `notify.env`, que contiene solo `VVA_NOTIFY_WEBHOOK_URL`, así que un proceso que manda una sola petición HTTP nunca tiene credenciales de cámara ni `VVA_API_TOKEN`. La URL del webhook vive **solo** en `notify.env` (el pipeline carga los dos archivos), así que nunca se duplica en dos archivos que puedan desincronizarse.
+
+  ```bash
+  #!/usr/bin/env bash
+  # install/render-units.sh (v11.4) — run as root at install time:  sudo install/render-units.sh /etc/vva/site
+  set -euo pipefail
+  repo_dir="$(dirname "$(realpath "$0")")"
+  site_dir="$(realpath -e "${1:?usage: render-units.sh <VVA_SITE_DIR>}")"
+  # The path is substituted into unit files: refuse characters systemd or sed would reinterpret.
+  [[ "$site_dir" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "unsupported characters in ${site_dir}" >&2; exit 1; }
+  for f in secrets.env notify.env; do
+    [[ "$(stat -c '%U %a' "${site_dir}/${f}" 2>/dev/null)" == "root 600" ]] \
+      || { echo "${site_dir}/${f} must exist, be root-owned and mode 0600" >&2; exit 1; }
+  done
+  for tpl in "${repo_dir}"/systemd/*.service.in; do
+    out="/etc/systemd/system/$(basename "${tpl%.in}")"
+    sed "s|@VVA_SITE_DIR@|${site_dir}|g" "$tpl" > "$out"
+    if grep -q '@[A-Z_]*@' "$out"; then echo "unrendered placeholder in ${out}" >&2; exit 1; fi
+  done
+  systemctl daemon-reload
+  ```
+
+  Cambiar `VVA_SITE_DIR` significa volver a correr este único script. Se niega a generar las unidades si alguno de los dos archivos de secretos no existe, no es de `root` o no tiene permisos `0600`, y si sobrevive algún marcador `@...@`. Que sean `0600 root` no deja al servicio sin sus variables: systemd lee `EnvironmentFile=` como root antes de arrancar el proceso.
 
 - **Presupuesto de memoria de todo el sistema (v4).** §1.9 ya señala la contención de memoria del *dispositivo* NPU entre el detector y el LLM de enriquecimiento residente; la misma disciplina aplica a la RAM del host. El conjunto concurrente en un solo Pi 5 es: el hilo del buzón (mailbox) RTSP, el hilo de desmultiplexado de pre-grabación de PyAV, el runtime de HailoRT, Uvicorn/FastAPI, APScheduler, SQLite (WAL), y el registro (logging) — sin ningún límite de RAM definido en ningún lugar. Haz un presupuesto aproximado durante el pico de exploración fuera de línea del hito 1 (con el modelo de enriquecimiento residente, ya que ese es el peor caso) y expón la memoria del host en `/metrics` junto con los contadores existentes de NPU/dispositivo, para que un crecimiento lento de memoria durante la prueba de resistencia sea visible antes de convertirse en un OOM kill.
 - **Retención vs. capacidad (v4).** `disk_full_policy` arriba es una política de *capacidad* — solo se activa bajo presión de almacenamiento. No hay una purga independiente por edad máxima, ni una postura declarada sobre grabar incidentalmente a personas que no son del hogar (repartidores, carteros, vecinos que pasan por el límite de la zona). Incluso para un MVP residencial privado, define un `max_retention_days` explícito para los clips independiente del uso de disco, y decide de antemano por cuánto tiempo se conserva el material de personas ajenas al hogar.
@@ -1048,14 +1089,14 @@ hardening:
 
 **Adición v11 — un interruptor de hombre muerto, porque el consumidor v9 comparte destino con lo que vigila.** El consumidor de `/health` de arriba se ejecuta *dentro* del proceso de la canalización, así que puede reportar "degradado pero en ejecución" y nada más: un cierre inesperado, un OOM kill, systemd rindiéndose después de `start_limit_burst: 5`, un corte de energía, o una conexión de red perdida, todos lo silencian justo en el momento en que importa. Dos mecanismos cierran esto, y cubren conjuntos de fallas **disjuntos**: la unidad `OnFailure=` de §1.13 reporta un proceso que ha muerto, se ha bloqueado, o ha agotado su presupuesto de reinicios, pero necesita que systemd y la red estén vivos para hacerlo; el interruptor de hombre muerto de abajo no necesita ninguno de los dos — un trabajo de APScheduler (§1.8, ya en el stack) emite un ping HTTP a un extremo externo cada `interval_seconds`, y el servicio *externo* genera la alerta cuando los pings se detienen por más tiempo que `grace_period_seconds`. Es el único mecanismo en este documento que detecta pérdida de energía, pérdida de red, o un kernel bloqueado, precisamente porque la alerta se decide en algún lugar que el Pi no puede derribar consigo. Hacer ping es un trabajo, no una verificación de salud — no debe depender del bucle de fotogramas ni del hilo escritor, o heredaría sus modos de falla.
 
-**Corrección v11.3 — los destinos de alerta son de cada casa.** El bloque anterior tenía la URL del webhook escrita en `notify.yaml`, que es un default compartido por todas las instalaciones. En un servidor público de ntfy el nombre del tema funciona como contraseña: quien lo conoce recibe las alertas. Si ese valor vive en los defaults, dos casas terminan compartiendo canal. Los tres destinos (webhook, Telegram y dead-man's switch) se leen ahora por nombre de variable de entorno desde el `secrets.env` del sitio (§1.19), y §1.18 falla al arrancar si alguno falta mientras su canal está habilitado.
+**Corrección v11.3 — los destinos de alerta son de cada casa.** El bloque anterior tenía la URL del webhook escrita en `notify.yaml`, que es un default compartido por todas las instalaciones. En un servidor público de ntfy el nombre del tema funciona como contraseña: quien lo conoce recibe las alertas. Si ese valor vive en los defaults, dos casas terminan compartiendo canal. Los tres destinos (webhook, Telegram y dead-man's switch) se leen ahora por nombre de variable de entorno desde el paquete del sitio (§1.19) —la URL del webhook desde `notify.env`; Telegram y el dead-man's switch desde `secrets.env` (v11.4)— y §1.18 falla al arrancar si alguno falta mientras su canal está habilitado.
 
 ```yaml
 # config/notify.yaml (v11, v11.3)
 notify:
   enabled: true
   provider: webhook             # v5: webhook is the baseline outbox channel — ntfy/pushover/mqtt are all webhook-shaped
-  webhook_url_env: VVA_NOTIFY_WEBHOOK_URL   # v11.3: per-site secret (§1.19) — on a public ntfy server the topic name works as a password
+  webhook_url_env: VVA_NOTIFY_WEBHOOK_URL   # v11.3: per-site secret (§1.19) — on a public ntfy server the topic name works as a password; v11.4: lives in notify.env (§1.13)
   secondary_provider: telegram  # v5: additive second channel once the webhook path is proven, per the outbox decision above
   secondary_credentials_env: [VVA_TELEGRAM_BOT_TOKEN, VVA_TELEGRAM_CHAT_ID]   # v11.3: one chat per household
   throttle:                     # v11.2: moved from events.yaml; throttles notifications, never events
@@ -1165,12 +1206,19 @@ Esto verifica exactamente los dos invariantes nombrados arriba — `detector.con
 **Adición v11.3 — invariantes del paquete de sitio.** El paquete de §1.19 agrega una segunda fuente de configuración, y con ella una nueva forma de desincronizarse: una clave mal escrita en `site.yaml` no da error; simplemente no se aplica y el default sigue activo sin que nadie lo note. Las invariantes siguientes corren antes de `validate_config()`, con la misma regla: excepción, nunca advertencia.
 
 ```python
-# src/config/validate.py (v11.3) — site-bundle invariants, run before validate_config()
+# src/config/validate.py (v11.3, v11.4) — site-bundle invariants, run before validate_config()
 import os, re
 from pathlib import Path
 
+import yaml
+
 SITE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
 PLACEHOLDER = re.compile(r"<[^>]+>")
+ASPECT_CORRECTION = {"none", "square_pixels"}   # v11.4: the §1.3 enum, enforced at startup
+# Keys whose values start with "/" but are URL routes, not filesystem paths.
+# Exempting by key (not by value) keeps rule 2 fail-closed: any NEW key with an
+# absolute path still fails until someone consciously adds it here.
+NON_FS_KEYS = {"observability.metrics_endpoint"}
 
 def _keys(d, prefix=""):   # leaf paths only, e.g. "tracker.min_iou_match"
     for k, v in d.items():
@@ -1180,28 +1228,42 @@ def _keys(d, prefix=""):   # leaf paths only, e.g. "tracker.min_iou_match"
         else:
             yield path
 
-def _scalars(d):
-    for v in d.values():
+def _items(d, prefix=""):   # (leaf path, scalar); list elements share the list's path
+    for k, v in d.items():
+        path = f"{prefix}{k}"
         if isinstance(v, dict):
-            yield from _scalars(v)
+            yield from _items(v, path + ".")
         elif isinstance(v, list):
-            yield from (x for x in v if not isinstance(x, (dict, list)))
+            yield from ((path, x) for x in v if not isinstance(x, (dict, list)))
         else:
-            yield v
+            yield path, v
 
-def validate_site(defaults: dict, site: dict, site_dir: Path) -> list[str]:
-    if not SITE_ID.match(site.get("site_id", "")):
-        raise ConfigError("site_id must be a lowercase slug such as 'casa-roma'")
-    # 1) An override may only change a key that already exists in the defaults:
-    #    a typo must fail, not be silently ignored while the default stays active.
-    unknown = sorted(set(_keys(site.get("overrides", {}))) - set(_keys(defaults)))
+def _overridable(defaults: dict) -> set[str]:
+    """v11.4: keys a site may override, declared by each defaults block next to the parameters it governs."""
+    return {f"{section}.{key}" for section, block in defaults.items() if isinstance(block, dict)
+            for key in block.get("site_overridable", [])}
+
+def _check_overrides(defaults: dict, site: dict) -> list[str]:
+    requested = set(_keys(site.get("overrides", {})))
+    # 1a) A typo must fail, not be silently ignored while the default stays active.
+    unknown = sorted(requested - set(_keys(defaults)))
     if unknown:
         raise ConfigError(f"site overrides unknown keys: {unknown}")
+    # 1b) v11.4: an existing key is not enough — only what depends on the house may change.
+    locked = sorted(requested - _overridable(defaults))
+    if locked:
+        raise ConfigError(f"site overrides keys that are not site_overridable: {locked}")
+    return sorted(requested)
+
+def _check_no_absolute_paths(defaults: dict) -> None:
     # 2) Defaults are shared by every house, so they carry no house-specific paths.
-    bad = [v for v in _scalars(defaults) if isinstance(v, str) and v.startswith("/")]
+    bad = [f"{k}={v}" for k, v in _items(defaults)
+           if isinstance(v, str) and k not in NON_FS_KEYS and Path(v).is_absolute()]
     if bad:
         raise ConfigError(f"absolute paths belong in site.yaml, not in configs/: {bad}")
-    # 3) Every camera is complete: profile, zones and its secrets.
+
+def _check_cameras(site: dict, site_dir: Path) -> None:
+    # 3) Every camera is complete and decided: profile, zones, no placeholders, a valid aspect_correction.
     for camera_id in site["cameras"]:
         for rel in (f"cameras/{camera_id}.yaml", f"zones/{camera_id}.json"):
             path = site_dir / rel
@@ -1209,19 +1271,76 @@ def validate_site(defaults: dict, site: dict, site_dir: Path) -> list[str]:
                 raise ConfigError(f"missing {rel} in site bundle {site_dir}")
             if PLACEHOLDER.search(path.read_text()):
                 raise ConfigError(f"unfilled <...> placeholder in {path}")
+        profile = yaml.safe_load((site_dir / f"cameras/{camera_id}.yaml").read_text())["camera"]
+        value = profile.get("aspect_correction")
+        if value not in ASPECT_CORRECTION:
+            raise ConfigError(f"cameras/{camera_id}.yaml: aspect_correction must be one of "
+                              f"{sorted(ASPECT_CORRECTION)}, got {value!r} — decide it with "
+                              "DETECTION_EVAL at milestone 1 (§1.3)")
+
+def _required_secrets(defaults: dict, site: dict) -> dict[str, str]:
+    """v11.4: every env var the enabled configuration will read, mapped to the bundle file that defines it."""
+    need = {"VVA_API_TOKEN": "secrets.env"}
+    for camera_id in site["cameras"]:
         env_id = camera_id.upper().replace("-", "_")
-        for var in (f"VVA_CAM_{env_id}_SUB_URL", f"VVA_CAM_{env_id}_MAIN_URL"):
-            if var not in os.environ:   # report the NAME only, never a value
-                raise ConfigError(f"missing secret {var} (expected in {site_dir}/secrets.env)")
-    # 4) Storage paths are mandatory and absolute — only the site knows its disks.
+        for suffix in ("SUB_URL", "MAIN_URL", "ONVIF_HOST", "ONVIF_USER", "ONVIF_PASSWORD"):
+            need[f"VVA_CAM_{env_id}_{suffix}"] = "secrets.env"
+    notify = defaults["notify"]
+    if notify["enabled"]:
+        need[notify["webhook_url_env"]] = "notify.env"   # the only secret camera-alert@.service loads (§1.13)
+        if notify.get("secondary_provider"):
+            need.update(dict.fromkeys(notify["secondary_credentials_env"], "secrets.env"))
+    if notify["dead_mans_switch"]["enabled"]:
+        need[notify["dead_mans_switch"]["ping_url_env"]] = "secrets.env"
+    return need
+
+def _check_secrets(defaults: dict, site: dict, site_dir: Path) -> None:
+    # 4) Unset and empty both count as missing (`VAR=` in an env file sets ""). Report every
+    #    missing NAME at once, never a value, so a new install is fixed in one pass.
+    missing = sorted(f"{var} (expected in {site_dir}/{file})"
+                     for var, file in _required_secrets(defaults, site).items()
+                     if not os.environ.get(var))
+    if missing:
+        raise ConfigError(f"missing secrets: {missing}")
+
+def _check_storage(site: dict) -> None:
+    # 5) Storage paths are mandatory and absolute — only the site knows its disks.
     for key in ("sqlite_db_path", "clips_dir"):
         if not Path(site["storage"].get(key) or "").is_absolute():
             raise ConfigError(f"storage.{key} must be an absolute path in site.yaml")
-    # Returned so startup can log which defaults this house overrides.
-    return sorted(set(_keys(site.get("overrides", {}))))
+
+def validate_site(defaults: dict, site: dict, site_dir: Path) -> list[str]:
+    """Raise ConfigError on the first broken bundle invariant; return the overridden keys for the startup log."""
+    if not SITE_ID.match(site.get("site_id", "")):
+        raise ConfigError("site_id must be a lowercase slug such as 'casa-roma'")
+    overridden = _check_overrides(defaults, site)
+    _check_no_absolute_paths(defaults)
+    _check_cameras(site, site_dir)
+    _check_secrets(defaults, site, site_dir)
+    _check_storage(site)
+    return overridden
 ```
 
 La lista que devuelve `validate_site()` se escribe en el log de arranque y en la salida del banco (§1.11). En un negocio, es la respuesta a la pregunta «¿en qué se aparta esta casa de las demás?».
+
+**Correcciones v11.4 — cuatro reglas que el código v11.3 no hacía cumplir tal como estaban escritas.**
+
+1. **La regla 2 revisa rutas, no strings que empiezan con "/".** El default publicado `observability.metrics_endpoint: /metrics` es una ruta HTTP, y v11.3 lo rechazaba, así que todos los arranques fallaban. La regla ahora recorre pares `(clave, valor)`, prueba `Path(v).is_absolute()` y exime las rutas de URL **por clave** en `NON_FS_KEYS`. Eximir por clave y no por convención de nombre (`*_path`, `*_dir`) mantiene la regla cerrada ante la duda: `zone_definitions` y `ground_truth_csv` son rutas que ninguna regla de sufijos atraparía.
+2. **Una sobrescritura debe existir *y* estar declarada como sobrescribible.** Rechazar claves desconocidas solo atrapa typos; aun así dejaba que una casa cambiara `min_confirmed_hits`, los cooldowns de eventos o `detector.confidence_threshold`, en contra de la nota de §1.4 y del invariante 4 de `AGENTS.md`. Cada bloque de defaults lista ahora, junto a los parámetros que gobierna, las claves que un sitio puede cambiar (`site_overridable`, hoy solo las dos claves del tracker en píxeles). Abrir otra es un commit revisado, no una línea en el `site.yaml` de alguien.
+3. **Se revisan todos los secretos que lee la configuración habilitada.** `_required_secrets()` deriva los nombres de la propia configuración (URLs de stream y credenciales ONVIF por cámara, los canales de notificación habilitados, el dead-man's switch, `VVA_API_TOKEN`) y el archivo que debe definir cada uno. Un valor vacío cuenta como faltante, y todos los **nombres** faltantes se reportan en un solo error, nunca un valor, para que una instalación nueva se arregle en una pasada y no con un reinicio por secreto.
+4. **`aspect_correction` se valida contra su enum.** `undecided` no es un marcador `<...>`, así que v11.3 lo dejaba pasar y la transformación inversa de las cajas (§1.3) correría con un paso indefinido. Validar el enum también atrapa typos como `square_pixel`, cosa que la revisión de marcadores no puede.
+
+Cada regla es ahora su propia función auxiliar, lo que mantiene cada función dentro del límite McCabe ≤ 10 de `AGENTS.md`.
+
+**Orden de arranque (v11.4).** `validate_site()` inspecciona las dos capas sin combinar, porque solo ahí puede distinguir qué *pidió* cambiar un sitio; `validate_config()` corre sobre la configuración **combinada**, porque es la que de verdad va a correr. Correr `validate_config()` solo sobre los defaults dejaría pasar una desigualdad de `confidence_threshold` ya combinada el día que la lista crezca, aunque la lista blanca sea correcta.
+
+```python
+# src/config/site.py (v11.4) — startup order
+overridden = validate_site(defaults, site, site_dir)   # raw layers: what the site is allowed to change
+cfg = load_config(defaults, site, site_dir)            # merges site.overrides per §1.19 rule 1
+validate_config(cfg)                                   # merged result: what will actually run
+log.info("site %s overrides %s", site["site_id"], overridden)
+```
 
 **Lecturas adicionales:**
 - [Pydantic Settings documentation](https://pydantic.dev/docs/validation/latest/concepts/pydantic_settings/) — una capa de configuración tipada/validación ya lista sobre la que se puede construir este módulo
@@ -1238,7 +1357,7 @@ La lista que devuelve `validate_site()` se escribe en el log de arranque y en la
 |---|---|---|---|
 | Defaults | `configs/*.yaml` en el repositorio, versionados | Umbrales, algoritmos, políticas, presupuestos, reglas de evaluación | Un commit, igual que el código |
 | Sitio | `VVA_SITE_DIR` (por defecto `/etc/vva/site/`), fuera del repositorio | `site_id`, zona horaria, cámaras y su perfil, zonas, calibración de suelo, rutas de almacenamiento, sobrescrituras de umbrales | La instalación |
-| Secretos del sitio | `VVA_SITE_DIR/secrets.env`, permisos `0600` | Credenciales de cámara, webhook, Telegram, dead-man's switch, token de la API | La instalación; nunca se copian a otra casa |
+| Secretos del sitio | `VVA_SITE_DIR/secrets.env` y `VVA_SITE_DIR/notify.env` (v11.4), permisos `0600` | `secrets.env`: credenciales de cámara, Telegram, dead-man's switch, token de la API. `notify.env`: solo la URL del webhook | La instalación; nunca se copian a otra casa |
 
 ```text
 configs/                        # repo: defaults shared by every installation (versioned)
@@ -1248,7 +1367,8 @@ $VVA_SITE_DIR/                  # per installation, outside the repo (default /e
   cameras/<camera_id>.yaml      # camera profile + pixel budget (§0)
   zones/<camera_id>.json        # zone polygons (§1.5)
   calibration/<camera_id>.yaml  # ground-plane points for §4.2 (§1.5)
-  secrets.env                   # 0600 — VVA_CAM_*, VVA_NOTIFY_*, VVA_TELEGRAM_*, VVA_DMS_*, VVA_API_TOKEN
+  secrets.env                   # 0600 — VVA_CAM_*, VVA_TELEGRAM_*, VVA_DMS_*, VVA_API_TOKEN
+  notify.env                    # 0600 — VVA_NOTIFY_WEBHOOK_URL only: the one secret camera-alert@.service loads (§1.13, v11.4)
 ```
 
 ```yaml
@@ -1260,7 +1380,7 @@ site:
   storage:
     sqlite_db_path: /mnt/ssd/camera_events.db   # moved here from hardening.yaml
     clips_dir: /mnt/ssd/clips/                  # moved here from pre_roll.yaml / hardening.yaml
-  overrides:                          # only keys that already exist in configs/*.yaml (§1.18); logged at startup
+  overrides:                          # only keys listed in a defaults block's site_overridable (§1.18, v11.4); logged at startup
     tracker:
       max_centroid_distance_px: 120   # pixel-space values are site-dependent until §4.2 (§1.4)
 ```
@@ -1268,10 +1388,10 @@ site:
 Tres reglas de diseño, cada una con su porqué:
 
 1. **Solo dos capas, y en un orden fijo:** defaults, luego `site.overrides`. Los diccionarios se fusionan y los escalares y listas se reemplazan. No hay una tercera capa de variables de entorno para valores de configuración: cada capa extra es otro lugar del que puede venir un valor, que es exactamente la desincronización que §1.18 existe para atrapar. Las variables de entorno quedan reservadas para secretos.
-2. **Una sobrescritura no puede crear claves.** Si la clave no existe en los defaults, el arranque falla (§1.18). Sin esta regla, `max_centroid_distnce_px` en `site.yaml` se ignora en silencio y la casa corre con el default creyendo que lo cambió.
+2. **Una sobrescritura no puede crear claves, y solo puede tocar claves declaradas en `site_overridable` (v11.4).** Si la clave no existe en los defaults, el arranque falla (§1.18). Sin esta regla, `max_centroid_distnce_px` en `site.yaml` se ignora en silencio y la casa corre con el default creyendo que lo cambió. Si la clave existe pero su bloque de defaults no la lista en `site_overridable`, el arranque también falla: la casa puede cambiar lo que depende de la casa, no el algoritmo.
 3. **Tres hashes en lugar de uno.** `config_hash` (§1.11, v6) identifica la configuración combinada; `defaults_hash` y `site_hash` dicen cuál de las dos capas cambió. `secrets.env` queda fuera de los hashes y nunca se registra: cambiar una contraseña no debe parecer un cambio de comportamiento.
 
-Para desarrollo y CI, `configs/site.example/` es un paquete completo con valores sintéticos (cámara `front`, rutas bajo `/tmp`, sin secretos reales). Así las pruebas ejercitan la misma carga de dos capas que corre en la Pi, sin datos de ninguna casa en el repositorio. En la Pi, la unidad de systemd carga `secrets.env` con `EnvironmentFile=` (§1.13) y fija `VVA_SITE_DIR` si no es el valor por defecto.
+Para desarrollo y CI, `configs/site.example/` es un paquete completo con valores sintéticos (cámara `front`, rutas bajo `/tmp`, sin secretos reales). Así las pruebas ejercitan la misma carga de dos capas que corre en la Pi, sin datos de ninguna casa en el repositorio. En la Pi, las unidades generadas por `install/render-units.sh` (§1.13, v11.4) cargan `secrets.env` y `notify.env` con `EnvironmentFile=` y siempre fijan `VVA_SITE_DIR`, todo a partir del mismo valor. La plantilla trae `secrets.env.example` y `notify.env.example`: todo `*.env` está en `.gitignore`, así que un archivo de secretos real copiado dentro del repositorio no se puede commitear por accidente.
 
 **Qué no hace todavía.** No instala, no actualiza ni monitorea casas a distancia. El paquete de sitio es la condición para que esas piezas puedan existir sin tocar el código, pero diseñarlas antes de tener una segunda casa sería adivinar (ver el final de §3).
 
@@ -1328,7 +1448,7 @@ El ritmo propuesto asume trabajo incremental de medio tiempo (tardes/fines de se
 | 8 | Alertas y canal de notificación (v5) | 2 nov – 8 nov, 2026 | Consumidor de notificaciones conectado a una cola de notificación dedicada post-commit alimentada por el hilo escritor de §1.6 — nunca un segundo consumidor de la propia cola de entrada del escritor — disparando una vez que cada evento se confirma (§1.14); la entrega pasa primero por webhook, según la decisión de outbox del proyecto, con Telegram conectado como un segundo canal adicional; los fallos de entrega se registran y reintentan con backoff sin bloquear la ingesta; evento sintético end-to-end entregado a través de ambos canales |
 | 9 | Búfer de evidencia de pre-grabación | 9 nov – 15 nov, 2026 | El búfer circular de paquetes de PyAV vacía clips de pre/post-grabación alineados a keyframes vinculados a las filas de eventos; se registra la duración de pre-grabación lograda; la segunda conexión RTSP tiene su propia reconexión y contadores (§1.12) |
 | 10 | Enriquecimiento local (Hailo-Ollama) | 16 nov – 22 nov, 2026 | Resúmenes solo de texto generados de forma asíncrona; `/hailo/v1/list` accesible solo en localhost; latencia del detector remedida con el LLM residente en la NPU (§1.9) |
-| 11 | Endurecimiento, prueba de resistencia y demo | 23 nov – 29 nov, 2026 | BD/clips en SSD USB, batería RTC instalada, rotación de logs y desalojo por disco lleno verificados, verificaciones de arranque en la unidad de systemd (§1.13); **v4: `Restart=on-failure` + `RestartSec` + `StartLimitBurst` + latido de `WatchdogSec`/`sd_notify` configurado, y presupuesto de memoria del host expuesto en `/metrics` (§1.13)**; **v11: `OnFailure=camera-alert@%n.service` configurado y verificado matando el proceso del pipeline y recibiendo el webhook (§1.13); dead-man's switch verificado apagando la Pi y confirmando que llega la alerta externa (§1.14)**; prueba de resistencia de 24 horas sin caídas, bloqueos ni crecimiento de memoria; pipeline completo demostrado en una cámara |
+| 11 | Endurecimiento, prueba de resistencia y demo | 23 nov – 29 nov, 2026 | BD/clips en SSD USB, batería RTC instalada, rotación de logs y desalojo por disco lleno verificados, verificaciones de arranque en la unidad de systemd (§1.13); **v4: `Restart=on-failure` + `RestartSec` + `StartLimitBurst` + latido de `WatchdogSec`/`sd_notify` configurado, y presupuesto de memoria del host expuesto en `/metrics` (§1.13)**; **v11: `OnFailure=camera-alert@%n.service` configurado y verificado matando el proceso del pipeline y recibiendo el webhook (§1.13); dead-man's switch verificado apagando la Pi y confirmando que llega la alerta externa (§1.14)**; **v11.4: unidades generadas con `install/render-units.sh` y alerta de caída verificada con un `VVA_SITE_DIR` distinto del default (§1.13)**; prueba de resistencia de 24 horas sin caídas, bloqueos ni crecimiento de memoria; pipeline completo demostrado en una cámara |
 
 **Backlog de fase 2 (v4):** la detección de manipulación/obstrucción de cámara (§1.16) y la UI mínima de operador (§1.15) son valiosas pero no están en la ruta crítica hacia una demo de MVP de una cámara — pertenecen junto a los refinamientos matemáticos existentes de §4 como endurecimiento post-MVP, no como bloqueadores para el hito 11 (renumerado en v5).
 
@@ -1390,6 +1510,7 @@ El ritmo propuesto asume trabajo incremental de medio tiempo (tardes/fines de se
 - [ ] API vinculada a una interfaz específica con verificación de token portador en rutas que no son `/health` (v4)
 - [ ] Canal de notificación dispara al confirmarse el evento sin bloquear la ingesta (v4)
 - [ ] Unidad de alerta `OnFailure=` verificada matando el proceso; dead-man's switch verificado apagando la Pi y recibiendo la alerta externa (v11)
+- [ ] Unidades generadas desde el sitio con `install/render-units.sh`; alerta de caída recibida con un `VVA_SITE_DIR` distinto del default (v11.4)
 
 *Portabilidad (v11.3)*
 - [ ] Ningún dato de la casa en el repositorio: cámaras, zonas, calibración, rutas y secretos viven en `VVA_SITE_DIR` (§1.19)

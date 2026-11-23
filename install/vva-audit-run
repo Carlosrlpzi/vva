@@ -9,24 +9,28 @@
 #
 # Why a wrapper instead of allowing "opencode ..." in sudoers:
 #   sudoers would then let the human user run ANY opencode command as opencode-dev.
-#   This script fixes the repo, the agent, the command and the OpenCode version,
+#   This script fixes the repo, the agent, the command and the OpenCode binary,
 #   and accepts only a strictly validated git range as input.
+#
+# What the version pin does and does NOT guarantee:
+#   `--version` is what a binary says about itself, so the pin alone proves nothing if
+#   opencode-dev can replace the file. The guarantee comes from WHERE the auditor lives:
+#   a root-owned path that opencode-dev cannot write, checked below on every run
+#   (exit 7). Build agents run as opencode-dev and are NOT sandboxed (AGENTS.md), so
+#   the auditor must not share a writable binary with the code it audits.
 
 set -euo pipefail
 
 REPO="/srv/pi-vision"
 
-# OpenCode is installed for opencode-dev as a standalone binary (official install
-# script), not through node/npx: opencode-dev has no node at all. Find it with:
-#   sudo -iu opencode-dev bash -ic 'command -v opencode'
-OPENCODE_BIN="/home/opencode-dev/.opencode/bin/opencode"
-
-# Pinned version. npx used to enforce the pin by downloading exactly this version;
-# a standalone binary self-updates, so the pin is now enforced by checking it
-# (fail closed): an unreviewed upgrade must not run the auditor silently.
-# Read the installed one with:
-#   sudo -iu opencode-dev ~/.opencode/bin/opencode --version
+# Pinned version. The auditor's binary lives in a root-owned, versioned directory,
+# separate from opencode-dev's own ~/.opencode/bin (which self-updates and is used
+# interactively). It cannot self-update there: opencode-dev has no write access.
+# Upgrade = install the reviewed binary under /opt/opencode/<new>/, change this value,
+# reinstall this wrapper. The old directory stays as an instant rollback.
+# Install steps: docs/guia-opencode-ubuntu.md, section 6.1.
 OPENCODE_VERSION="1.19.5"
+OPENCODE_BIN="/opt/opencode/${OPENCODE_VERSION}/opencode"
 
 range="${1:-}"
 if [[ ! "$range" =~ ^[0-9a-f]{40}\.\.[0-9a-f]{40}$ ]]; then
@@ -43,6 +47,20 @@ if [[ ! -x "$OPENCODE_BIN" ]]; then
   echo "vva-audit-run: opencode binary not found at ${OPENCODE_BIN}" >&2
   exit 5
 fi
+
+# Exit 7: the binary, or any directory above it, could be replaced by a non-root user.
+# realpath first, so a symlink cannot point the check at one file and exec at another.
+real_bin="$(realpath -e "$OPENCODE_BIN")"
+p="$real_bin"
+while [[ "$p" != "/" ]]; do
+  read -r owner mode < <(stat -c '%U %a' "$p")
+  if [[ "$owner" != "root" ]] || (( 8#$mode & 8#022 )); then
+    echo "vva-audit-run: ${p} must be root-owned and not group/other-writable (is ${owner} ${mode})" >&2
+    exit 7
+  fi
+  p="$(dirname "$p")"
+done
+OPENCODE_BIN="$real_bin"
 
 installed="$("$OPENCODE_BIN" --version 2>/dev/null | tr -d '[:space:]' || true)"
 if [[ "$installed" != "$OPENCODE_VERSION" ]]; then

@@ -153,6 +153,24 @@ opencode --version
 
 Como lo instalas con este usuario, el binario queda en su home y no requiere `sudo`.
 
+### 6.1 Copia del auditor en una ruta de root
+
+El binario de `~/.opencode/bin` es el que usas de forma interactiva, y `opencode-dev` puede escribirlo: se autoactualiza y, como el código generado **no** corre en sandbox, un agente de build también podría reemplazarlo. Por eso el auditor (`vva-audit-run`) **no** usa ese binario, sino una copia en `/opt/opencode/<versión>/`, de `root` y sin permiso de escritura para nadie más. Ahí no puede autoactualizarse ni ser sustituido, y el wrapper lo comprueba en cada push (sale con código 7 si la ruta o cualquier carpeta superior no es de `root` o tiene escritura de grupo u otros).
+
+Hazlo con **tu** usuario, no como `opencode-dev`:
+
+```bash
+VER=1.19.5
+sudo install -d -o root -g root -m 0755 /opt/opencode /opt/opencode/$VER
+# Usa un binario que opencode-dev no haya podido tocar: descarga el release oficial de esa
+# versión desde la página de releases de OpenCode en GitHub y compara su checksum con el
+# publicado. No copies el de /home/opencode-dev/.opencode/bin: es justo el que no es confiable.
+sudo install -o root -g root -m 0755 ./opencode /opt/opencode/$VER/opencode
+sudo -u opencode-dev /opt/opencode/$VER/opencode --version   # debe imprimir 1.19.5
+```
+
+Para actualizar el auditor: revisa la versión nueva, instálala en `/opt/opencode/<nueva>/`, cambia `OPENCODE_VERSION` en `install/vva-audit-run` y reinstala el wrapper (`sudo install -o root -g root -m 0755 install/vva-audit-run /usr/local/bin/vva-audit-run`). La carpeta anterior se queda como respaldo para volver atrás.
+
 ---
 
 ## 7. Conectar DeepSeek

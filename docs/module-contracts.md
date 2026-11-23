@@ -172,8 +172,8 @@ Log rows written to JSONL are NOT redefined: import them from
 - Tier: Flash.
 
 ## M3 Zones, labelling and replay harness (§1.5 zones, §1.11) - milestone 3
-- Path: `configs/zones/<camera_id>.json`, `src/vva_app/eval/replay_runner.py`, config `configs/eval.yaml`.
-- Consumes: recordings, ground-truth CSV with `condition` (`day` / `night_ir`). Produces: precision/recall/F1 per condition with Wilson intervals, and per-stage traces as in-process Python objects (D1).
+- Path: `<VVA_SITE_DIR>/zones/<camera_id>.json` (site bundle, guide §1.19 — never inside the repository), `src/vva_app/eval/replay_runner.py`, config `configs/eval.yaml`.
+- Consumes: recordings, ground-truth CSV with `condition` (`day` / `night_ir`). Produces: precision/recall/F1 per condition with Wilson intervals, and per-stage traces as in-process Python objects (D1). Every report carries `site_id`, `config_hash`, `defaults_hash` and `site_hash` (guide §1.11, §1.19) so a number can be traced to the house and to the config layer that produced it.
 - Role (decided 2026-10-02): this harness is the authority for PRODUCTION event validation. It runs the real M6 state machine (and the M8 throttle decision, without sending) over recordings with a fake clock. RULE_REPLAY only compares frame-level detection policies.
 - Traces (D1, decided 2026-10-09): consumed IN PROCESS. The harness imports the real M6 module and reads confirmed tracks and emitted events as Python objects; it serialises no JSONL and creates no `TraceRow`. Discrepancy (M3 per-stage traces) RESOLVED 2026-10-09 by D1: a JSONL trace contract is deferred until the M5/M6 interfaces are implemented and stable; when added it must be a `StrictModel` consistent with `contracts/base.py`. Traceability meanwhile: the report emits the merged-config hash and `n_labeled_events` (§1.11).
 - Invariants: fake clock; matching rule explicit (`one_to_one_greedy_nearest`, window 5 s); held-out days never used for tuning; fail fast on unresolved `<...>` placeholders; `night_ir_insect_activity` must emit zero events.
