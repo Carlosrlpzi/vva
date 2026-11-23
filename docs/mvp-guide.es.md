@@ -11,7 +11,7 @@ track-based zone/event state machine → async SQLite write + pre-roll clip flus
 optional local Hailo GenAI enrichment
 ```
 
-El objetivo del MVP es deliberadamente acotado: **una cámara, una clase (`person`), una regla de zona**, funcionando de extremo a extremo. Una vez que ese segmento sea estable, los mismos módulos se generalizan a múltiples cámaras.
+El objetivo del MVP es deliberadamente acotado: **una cámara, una clase (`person`), una regla de zona**, funcionando de extremo a extremo. Una vez que ese segmento sea estable, los mismos módulos se generalizan a múltiples cámaras y, desde v11.3, a otras casas sin bifurcar el código (§1.19).
 
 ---
 
@@ -128,6 +128,18 @@ Decisiones del dueño del proyecto, registradas para que los agentes que escribe
 4. **Repositorio único.** La aplicación vive en `src/vva_app/` junto a `src/vva_contracts/`; toda ruta de la guía `src/<x>/...` corresponde a `src/vva_app/<x>/...` (por ejemplo `src/events/state_machine.py` → `src/vva_app/events/state_machine.py`).
 5. **Presupuesto por defecto de PIPELINE_BENCH = 400 ms**, igual a `end_to_end_latency_ms.alarm_p95` (§1.10).
 
+### v11.3 — Portabilidad desde el diseño: paquete de sitio (20 de nov. de 2026)
+
+Decisión del dueño del proyecto: aunque todavía no hay una segunda instalación, el sistema debe poder instalarse en otra casa sin bifurcar el código. Esta revisión incluye solo los cambios que cumplen dos criterios a la vez: **son baratos hoy**, porque consisten en decidir dónde vive cada dato y no en construir componentes nuevos, y **son caros después**, porque cambiarlos más adelante obligaría a migrar configuraciones o datos ya etiquetados. Lo que depende de tener una flota real (actualizaciones remotas, monitoreo central, acceso remoto, procedimiento de instalación con modo sombra) queda fuera de esta guía y se registra en `docs/post-mvp-backlog.md` (ver el final de §3).
+
+1. **Paquete de sitio (§1.19, nueva; §1.18 ampliada).** Separa lo que es igual en todas las instalaciones (código y defaults versionados en `configs/`) de lo que es propio de cada casa (cámaras, zonas, calibración, rutas de almacenamiento, destinatarios de alertas y secretos). Esto último vive fuera del repositorio, en `VVA_SITE_DIR` (por defecto `/etc/vva/site/`). §1.19 define la precedencia entre ambas capas, la regla de rechazo de claves desconocidas y un doble hash (`defaults_hash` + `site_hash`) para saber si un cambio en una métrica vino del código o de la instalación. §1.18 agrega las invariantes del paquete al arranque.
+2. **Perfil de cámara (§0, §1.1, §1.3).** Cada cámara registra modelo, lente, sensor, altura de montaje, resolución, codec y fps de ambos streams, GOP, alcance IR y la relación de aspecto del píxel (SAR). Esto saca a la luz un caso real de esta instalación: el substream de 720×576 es el mainstream 16:9 comprimido, así que sus píxeles no son cuadrados. Se agrega una decisión que se toma midiendo, no suponiendo: corregir o no la SAR antes del letterbox.
+3. **Un solo esquema de nombres para credenciales y secretos (§1.1, §1.7, §1.13, §1.14).** El ejemplo de §1.1 usaba `CAMERA_HOST`/`CAMERA_USER`/`CAMERA_PASSWORD`, que no escala a varias cámaras y contradecía `AGENTS.md` y `README.md` (`VVA_CAM_<ID>_...`). Se unifica, y los secretos de notificación (`VVA_NOTIFY_WEBHOOK_URL`, `VVA_DMS_PING_URL`, Telegram) y el token de la API (`VVA_API_TOKEN`) pasan al mismo `secrets.env` del sitio.
+4. **`site_id` en la evaluación (§1.11).** Se agrega la columna `site_id` al CSV de verdad de referencia y `heldout_sites` a `eval.yaml`. Con un solo sitio, el banco reporta de forma explícita que la generalización entre casas **no está medida**, para que el número del día reservado no se lea como si lo estuviera.
+5. **Puntos de calibración del suelo en el hito 3 (§1.5, §4.2).** Al dibujar las zonas se miden también los puntos de suelo para la homografía. La implementación de §4.2 sigue en fase 2; solo se adelanta la medición, que exige estar frente a la cámara.
+6. **Ninguna ruta absoluta en los defaults (§1.12, §1.13).** `/mnt/ssd/...` sale de `pre_roll.yaml` y `hardening.yaml` y pasa a `site.yaml`; `/etc/camera/notify.env` pasa a ser `/etc/vva/site/secrets.env`.
+7. **La licencia pasa de nota a compuerta (§1.3, §1.13, §3).** El repositorio ya es público y no tiene archivo `LICENSE`, así que la nota «decídelo antes de publicar» quedó desfasada. Se agrega una compuerta explícita: ninguna instalación en un dispositivo que no sea del dueño del proyecto, ni ningún uso comercial, hasta decidir entre (a) cumplir AGPL-3.0 publicando el proyecto completo bajo esa licencia, (b) una licencia Enterprise de Ultralytics, o (c) un detector con licencia permisiva compilado para el Hailo-10H.
+
 ---
 
 ## 0. Verificación previa al arranque: el presupuesto de píxeles
@@ -164,9 +176,44 @@ Si el presupuesto de píxeles resulta marginal, tienes tres opciones reales, en 
 - **Recortar e inferir (crop-and-infer).** En lugar de aplicar letterbox a todo el fotograma, recorta el polígono de zona (más margen) a la resolución nativa del substream y alimenta *eso* a la entrada de 640×640. Una persona que ocupa 33 px de un fotograma completo puede ocupar 90+ px de un recorte ajustado. Te cuesta conciencia fuera del recorte, lo cual es aceptable cuando tu regla de zona de todos modos solo le importa una región.
 - **Escalar el modelo.** YOLOv8s tiene un recall de objetos pequeños significativamente mejor que YOLOv8n, y el Hailo‑10H tiene amplio margen para ello (§1.10). Este es el mismo punto de decisión que alimenta la verificación INT8 contra FP32 en §1.3.
 
-**Adición v5 — el presupuesto nocturno está limitado por el alcance del IR, no solo por la ecuación de lente anterior.** La tabla del modelo pinhole anterior asume suficiente luz ambiental para que el sensor resuelva detalle a la distancia calculada; después del anochecer, la mayoría de las cámaras PoE de consumo/prosumer cambian a iluminación IR con un alcance efectivo especificado — comúnmente entre 20 y 30 m para esta clase de cámara — más allá del cual la imagen simplemente está demasiado oscura para exponerse, sin importar cuántos píxeles coloque la geometría sobre el objetivo. Ejecuta la misma tabla de altura en píxeles usando el alcance real del iluminador IR de tu cámara en lugar de (o junto con) su línea de visión diurna, y trata el que sea menor — el piso óptico de altura en píxeles o el piso de iluminación IR — como el verdadero límite de la zona nocturna. Registra ambas distancias en `configs/`: una zona trazada solo a partir de la visibilidad diurna puede reclamar silenciosamente una cobertura nocturna que la cámara no puede ofrecer.
+**Adición v5 — el presupuesto nocturno está limitado por el alcance del IR, no solo por la ecuación de lente anterior.** La tabla del modelo pinhole anterior asume suficiente luz ambiental para que el sensor resuelva detalle a la distancia calculada; después del anochecer, la mayoría de las cámaras PoE de consumo/prosumer cambian a iluminación IR con un alcance efectivo especificado — comúnmente entre 20 y 30 m para esta clase de cámara — más allá del cual la imagen simplemente está demasiado oscura para exponerse, sin importar cuántos píxeles coloque la geometría sobre el objetivo. Ejecuta la misma tabla de altura en píxeles usando el alcance real del iluminador IR de tu cámara en lugar de (o junto con) su línea de visión diurna, y trata el que sea menor — el piso óptico de altura en píxeles o el piso de iluminación IR — como el verdadero límite de la zona nocturna. Registra ambas distancias en el perfil de cámara (§1.19): una zona trazada solo a partir de la visibilidad diurna puede reclamar silenciosamente una cobertura nocturna que la cámara no puede ofrecer.
 
-**Criterio de salida:** una altura en píxeles medida para una persona de pie en el límite de la zona de cada cámara, registrada en `configs/` junto con el polígono de zona, y una decisión escrita sobre lente/resolución/modelo antes de que inicie el hito 1 — cubriendo tanto el caso diurno como el caso nocturno limitado por el alcance del IR.
+**Adición v11.3 — el perfil de cámara y la relación de aspecto del píxel.** Todo lo que esta sección mide depende del modelo de cámara, del lente y de dónde está montada, así que se registra en un archivo por cámara dentro del paquete de sitio (§1.19), no en el repositorio. El campo que más fácil se pasa por alto es la **relación de aspecto del píxel (SAR)**: cuánto mide un píxel de ancho respecto a su alto. Si el substream conserva la proporción del sensor, SAR = 1. Pero en esta instalación el substream de 720×576 (5:4) es el mainstream de 2560×1440 (16:9) comprimido, no recortado. La escala horizontal es 720/2560 = 0.281 y la vertical 576/1440 = 0.4, así que
+
+\[
+\text{SAR} = \frac{576/1440}{720/2560} \approx 1.42
+\]
+
+Cada píxel del substream representa una franja 1.42 veces más ancha que alta, y una persona aparece unas 0.70 veces más delgada de lo que es. El letterbox de §1.3 preserva fielmente la proporción del *archivo*, que aquí ya viene distorsionada. Hay tres salidas, en orden de costo:
+
+- **Configurar un substream 16:9 en la cámara** (por ejemplo 640×360), si el firmware lo ofrece. Elimina el problema (SAR = 1) sin código. Revísalo primero.
+- **No corregir.** El letterbox lleva 720×576 a 640×512: la persona conserva el 89% de su altura en píxeles del substream, pero el modelo recibe gente comprimida horizontalmente, una distribución que no existe en COCO, cuyas imágenes tienen píxeles cuadrados.
+- **Corregir a píxeles cuadrados antes del letterbox** (reescalar a 1024×576 o a 720×405). El letterbox termina en 640×360: la geometría es fiel, pero la persona conserva solo el 62.5% de su altura en píxeles, aproximadamente 30% menos que sin corregir, justo lo que §0 trata de proteger.
+
+Entre las dos últimas no hay una respuesta que se pueda deducir: una cuida la distribución de entrenamiento y la otra el presupuesto de píxeles. Se decide en el hito 1 con DETECTION_EVAL sobre los mismos fotogramas en ambas variantes, y la decisión se registra en el perfil. En cualquier caso, el \(P_h\) de la fórmula de arriba es la altura de la imagen que **entra** al letterbox, ya con la corrección aplicada si la hay, multiplicada después por la escala del letterbox.
+
+```yaml
+# <VVA_SITE_DIR>/cameras/<camera_id>.yaml (v11.3) — one per camera, part of the site bundle (§1.19), never committed
+camera:
+  camera_id: front
+  model: <vendor model>                 # e.g. from the camera's ONVIF GetDeviceInformation
+  lens_mm: 2.8
+  sensor_height_mm: <datasheet value>   # §0: varies a lot between 1/3", 1/2.8" and 1/2.7" parts
+  mount_height_m: 3.1
+  substream: {width: 720, height: 576, fps: 10, codec: h264}
+  mainstream: {width: 2560, height: 1440, codec: h264}
+  sample_aspect_ratio: 1.42             # (sub_h/main_h) / (sub_w/main_w); 1.0 means square pixels
+  aspect_correction: undecided          # none | square_pixels — decided by DETECTION_EVAL at milestone 1
+  gop_seconds: 1.0                      # set camera-side (§1.1, §1.12)
+  ir_range_m: 30
+  pixel_budget:                         # §0 exit criterion, measured at the zone boundary
+    day:   {distance_m: <measured>, person_height_px: <measured>}
+    night: {distance_m: <min(optical, ir_range)>, person_height_px: <measured>}
+```
+
+Los marcadores `<...>` son intencionales: el validador de §1.18 se niega a arrancar mientras alguno siga sin llenarse, igual que hace el banco con `eval.yaml` (§1.11, v9).
+
+**Criterio de salida:** una altura en píxeles medida para una persona de pie en el límite de la zona de cada cámara, registrada en el perfil de cámara del paquete de sitio (§1.19, v11.3) junto con el polígono de zona y la SAR del substream, y una decisión escrita sobre lente/resolución/modelo antes de que inicie el hito 1 — cubriendo tanto el caso diurno como el caso nocturno limitado por el alcance del IR.
 
 ---
 
@@ -183,11 +230,13 @@ Cada sección a continuación corresponde a un módulo en `src/`. Para cada comp
 ```python
 import os
 from onvif import ONVIFCamera
+
+camera_id = 'FRONT'   # v11.3: ids come from site.yaml (§1.19), upper-cased for env var names
 cam = ONVIFCamera(
-    os.environ['CAMERA_HOST'],
+    os.environ[f'VVA_CAM_{camera_id}_ONVIF_HOST'],
     80,
-    os.environ['CAMERA_USER'],
-    os.environ['CAMERA_PASSWORD'],
+    os.environ[f'VVA_CAM_{camera_id}_ONVIF_USER'],
+    os.environ[f'VVA_CAM_{camera_id}_ONVIF_PASSWORD'],
 )
 media = cam.create_media_service()
 profiles = media.GetProfiles()
@@ -199,12 +248,14 @@ uri = media.GetStreamUri({
 
 **Corrección v10 — no codifiques de forma fija las credenciales de cámara en el código fuente.** El ejemplo anterior previamente escribía el usuario y la contraseña de ONVIF directamente en el código. En su lugar, léelos desde variables de entorno (o un mecanismo de secretos equivalente), ya que este archivo es del tipo que termina siendo confirmado (committed), pegado en un reporte, o compartido para depuración — y el modo de falla es una credencial de cámara filtrada, no solo una llave de API filtrada.
 
+**Corrección v11.3 — un esquema de nombres por cámara.** La corrección v10 sacó las credenciales del código, pero con nombres únicos (`CAMERA_HOST`, `CAMERA_USER`, `CAMERA_PASSWORD`) que solo admiten una cámara y contradicen el esquema que ya usan `AGENTS.md` y `README.md`. El ejemplo de arriba usa `VVA_CAM_<ID>_ONVIF_HOST`/`_USER`/`_PASSWORD` y `VVA_CAM_<ID>_SUB_URL`/`_MAIN_URL`, donde `<ID>` es el `camera_id` del sitio en mayúsculas. Los valores viven en `secrets.env` del paquete de sitio (§1.19), que systemd carga con `EnvironmentFile=`, y §1.18 falla al arrancar si falta alguno.
+
 **Corrección (v2) — no dejes que `VideoCapture` se vuelva obsoleto silenciosamente.** `cv2.VideoCapture` almacena fotogramas en un búfer internamente (mediante FFmpeg/GStreamer), y si tu bucle de procesamiento alguna vez se atrasa respecto a la tasa de fotogramas real de la cámara, no descarta fotogramas — sirve fotogramas cada vez más viejos mientras `.read()` sigue retornando exitosamente. Nada da error, así que el sistema *parece* saludable mientras la latencia de alerta de extremo a extremo crece silenciosamente sin límite. Corrige esto con un hilo de ingesta dedicado que lee continuamente fotogramas hacia un "buzón" (mailbox) de una sola ranura (cada fotograma nuevo sobrescribe al anterior), de modo que el bucle de procesamiento siempre consuma el fotograma disponible más reciente y los obsoletos se descarten en lugar de encolarse. Donde el backend lo respeta, `cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)` también ayuda, pero no está soportado de forma confiable en todas las compilaciones de FFmpeg, así que trata el patrón de buzón con hilos como la corrección confiable. Adjunta una **marca de tiempo de captura** a cada fotograma en el instante en que se lee (no cuando se procesa después) — todo evento río abajo debe llevar este tiempo de captura, ya que de lo contrario un pipeline rezagado representaría incorrectamente cuándo ocurrió realmente algo, lo cual destruye el valor forense. Ver §1.10 para el presupuesto de latencia completo y la disciplina de marcas de tiempo que esto alimenta.
 
 **Configuración del lado de la cámara (v3).** Dos ajustes en la propia interfaz web de la cámara importan al software y son fáciles de olvidar porque viven fuera del repositorio:
 
 - **Intervalo de I-frame / GOP → ~1 segundo.** El búfer de pre-grabación (§1.12) solo puede cortar un clip en un keyframe. Si la cámara emite un I-frame cada 4 segundos, tu "pre-grabación de 6 segundos" en realidad es "en algún punto entre 4 y 8 segundos, no decodificable al inicio".
-- **La resolución y la tasa de fotogramas del substream** deben registrarse en `configs/` junto con el presupuesto de píxeles de §0, porque tanto el factor de escala del letterbox como el presupuesto de latencia se derivan de ellos.
+- **La resolución y la tasa de fotogramas del substream** deben registrarse en el perfil de cámara del paquete de sitio (§0, §1.19; v11.3) junto con el presupuesto de píxeles, porque tanto el factor de escala del letterbox como el presupuesto de latencia se derivan de ellos. Registra también si el substream conserva la proporción del sensor o la comprime (SAR, §0).
 
 **Lecturas adicionales:**
 - [python-onvif-zeep on GitHub](https://github.com/FalkTannhaeuser/python-onvif-zeep) — la biblioteca cliente de ONVIF usada en este proyecto
@@ -303,6 +354,8 @@ motion_gate:
 
 Nota la interacción con §0: en un substream de 640×360 el factor de escala del letterbox es 1.0 (solo se agrega relleno vertical), así que la resolución del substream *es* la resolución efectiva de detección. Elevar el substream a 720p reduce el factor de escala a la mitad y produce la misma altura en píxeles del objetivo — por eso recortar‑e‑inferir (crop-and-infer), no un substream más grande, es la palanca a usar si el presupuesto de píxeles resulta insuficiente.
 
+**Adición v11.3 — el letterbox preserva la proporción del archivo, no la de la escena.** La corrección v2 supone que el substream tiene píxeles cuadrados. Si la cámara entrega un substream comprimido (SAR ≠ 1, como el 720×576 de esta instalación, §0), el letterbox conserva fielmente una imagen que ya viene deformada. La corrección a píxeles cuadrados, si se adopta, es un paso por cámara que va **antes** del letterbox y se configura en `aspect_correction` del perfil de cámara, no en `models.yaml`, porque depende de la cámara y no del modelo. La transformación inversa que se aplica a las cajas debe deshacer ambos pasos, en orden inverso.
+
 ```yaml
 # config/models.yaml (v3)
 detector:
@@ -339,6 +392,8 @@ Trata `confidence_threshold` puramente como el *piso de emisión* del detector, 
 - **Recuperación:** intenta una reinicialización acotada (unos pocos reintentos con backoff). Si la reinicialización falla, mantén viva la ingestión y el búfer de pre‑grabación (para que la evidencia siga siendo registrada) pero reporta el pipeline como caído. Grabar sin analizar es un estado degradado que vale la pena preservar; fingir que se analiza no lo es.
 
 **Nota de licenciamiento.** Ultralytics YOLOv8 se distribuye bajo **AGPL‑3.0**. Eso es sin restricciones para uso privado y no distribuido exactamente como este proyecto, pero si el código llega a publicarse alguna vez como una pieza de portafolio de código abierto con código derivado construido sobre las herramientas de entrenamiento/exportación de Ultralytics, los términos de copyleft de AGPL se extienden hacia afuera a menos que se compre una licencia Ultralytics Enterprise. Decide esto temprano — no bloquea el MVP, pero sí restringe cómo se puede compartir el repositorio más adelante.
+
+**Corrección v11.3 — de nota a compuerta.** La nota anterior hablaba de publicar el repositorio en el futuro; hoy ya es público y no tiene archivo `LICENSE`, lo que por defecto significa «todos los derechos reservados»: eso también es una decisión, y conviene tomarla de forma consciente. Ultralytics sostiene que usar YOLO sin publicar el proyecto completo bajo AGPL-3.0 requiere su licencia Enterprise ([Ultralytics License](https://www.ultralytics.com/license)), y que un modelo ajustado a partir de sus pesos sigue siendo AGPL-3.0 ([ultralytics/ultralytics#2129](https://github.com/ultralytics/ultralytics/issues/2129)). La compuerta: **ninguna instalación en un dispositivo que no sea del dueño del proyecto, ni ningún uso comercial, hasta elegir una de tres rutas**: (a) cumplir AGPL-3.0 publicando el proyecto completo bajo esa licencia; (b) comprar la licencia Enterprise; (c) cambiar a un detector con licencia permisiva que el Hailo Model Zoo compile para el Hailo-10H. La ruta (c) es medible y reversible gracias a que el detector es un módulo aislado: QUANT_PARITY y DETECTION_EVAL comparan el modelo nuevo contra YOLOv8n en los mismos fotogramas, y la ruta de reversión de la adición v10 aplica sin cambios. Conviene validar la elección con asesoría legal antes de instalar en una casa ajena.
 
 **Deeper reading:**
 - [Hailo Model Zoo on GitHub](https://github.com/hailo-ai/hailo_model_zoo) — generación de HEF, números de benchmark, y configuraciones de modelo soportadas, incluyendo [`yolov8n.yaml`](https://github.com/hailo-ai/hailo_model_zoo/blob/master/hailo_model_zoo/cfg/networks/yolov8n.yaml)
@@ -420,6 +475,8 @@ Un track solo se vuelve `confirmed` (`track.is_confirmed = true`, elegible para 
 
 **Corrección v7 — el valor de v6 de `30.0` se derivó de una aritmética que contradecía su propia afirmación, y es aproximadamente dos órdenes de magnitud demasiado pequeño.** v6 afirmaba que una aceleración de píxeles "del orden de decenas de px/s²" implica una varianza "en las decenas de px²/s⁴" — pero elevar al cuadrado una cantidad en las decenas produce centenas a miles, no decenas; ese paso era simplemente incorrecto. Rederivar a partir de la propia tabla de presupuesto de píxeles de §0 da un rango de partida defendible en lugar de uno adivinado. El lente de 4.0 mm de §0 a 15 m ubica a una persona de 1.7 m en ~54 px, una escala de ~54 / 1.7 ≈ 32 px/m; una persona caminando que cambia de ritmo o dirección acelera aproximadamente a 1–2 m/s², así que a esa distancia la aceleración aparente en píxeles es del orden de ~32 × 1.5 ≈ 48 px/s², y \(\sigma_a^2 \approx 48^2 \approx 2{,}300\) px²/s⁴. A la distancia de 5 m del mismo lente, §0 da ~163 px, una escala de ~163 / 1.7 ≈ 96 px/m, así que la misma aceleración física de 1–2 m/s² es ~144 px/s² y \(\sigma_a^2 \approx 144^2 \approx 21{,}000\) px²/s⁴. La escala — y por lo tanto la varianza defendible — depende de la distancia a la cámara, así que trata **10³–10⁴ px²/s⁴** como el rango de partida que la geometría de zona de este proyecto realmente respalda, no una única constante. Fija **`kalman_sigma_accel_sq: 2000.0`** (configuración de §1.4) como punto de partida para que el banco de §1.11 lo ajuste — un valor de rango medio para una persona rastreada a distancia de zona moderada — en lugar del aritméticamente insostenible `30.0`. Un valor tan pequeño reproduce exactamente el fallo de covarianza sobreconfiada que describe §4.1: hace que el filtro esté *más* seguro de lo que debería sobre la posición después de un \(\Delta t\) largo, estrechando la puerta de asociación por IoU y disparando el mismo síntoma de ruptura de identidad/alerta duplicada que motivó en primer lugar la corrección de \(\Delta t^3\) — que es exactamente el modo de falla al que un valor dos órdenes de magnitud demasiado pequeño habría regresado directamente.
 
+**Nota v11.3 — dos parámetros de este bloque dependen de la casa, no del algoritmo.** `max_centroid_distance_px` y `kalman_sigma_accel_sq` viven en espacio de píxeles, así que su valor correcto depende del lente, de la altura de montaje y de la distancia a la zona: la derivación v7 de arriba los ata a la geometría de §0 de esta cámara. Hasta que §4.2 los lleve a metros, un sitio puede sobrescribirlos en su paquete (§1.19), y el arranque registra cada clave sobrescrita para que esa desviación quede visible en lugar de esconderse en un YAML editado a mano. Después de §4.2, sus versiones métricas son defaults comunes a todas las casas.
+
 **Deeper reading:**
 - [ByteTrack (ECCV 2022) on GitHub](https://github.com/FoundationVision/ByteTrack) — la idea de "asociar cada caja de detección" y sus números de precisión reportados en MOT17
 - [SORT — Simple Online and Realtime Tracking](https://github.com/abewley/sort) — la línea base más simple de Kalman+IoU a la que este tracker del MVP más se parece
@@ -465,7 +522,28 @@ event_eligible = (
 
 **Corrección de reducción de alcance (v2) — para el MVP, entrega solo la detección de entrada.** Entregar simultáneamente la detección de entrada, cruce y permanencia significa ajustar tres tasas de falsos positivos independientes a la vez, sin forma de aislar cuál regla se está comportando mal. El MVP debe habilitar **solo** la regla de zona de entrada, reducir su tasa de falsos positivos a un nivel aceptable usando el banco de reproducción fuera de línea (§1.11), y solo entonces activar el cruce y la permanencia como una adición de fase dos, una vez que la entrada sea confiable.
 
-**Corrección v3 — los polígonos de zona deben crearse antes de calibrar la puerta de movimiento.** La puerta de movimiento ahora deriva su máscara de ROI de `zone_polygons_plus_margin` (§1.2), lo cual convierte al polígono de zona en una *entrada* para la calibración de la puerta, en lugar de un artefacto de esta sección. Los polígonos de zona son configuración pura (una lista de puntos en el espacio de la imagen por cámara), no código, así que no hay razón para esperar: **créalos durante el proceso de etiquetado de verdad de referencia (hito 3)**, mientras de todas formas estás revisando cuadros de esa cámara y puedes ver exactamente dónde cae el límite de la entrada. Guárdalos en `configs/zones/<camera_id>.json` junto con la medición de presupuesto de píxeles de §0 para la misma cámara.
+**Corrección v3 — los polígonos de zona deben crearse antes de calibrar la puerta de movimiento.** La puerta de movimiento ahora deriva su máscara de ROI de `zone_polygons_plus_margin` (§1.2), lo cual convierte al polígono de zona en una *entrada* para la calibración de la puerta, en lugar de un artefacto de esta sección. Los polígonos de zona son configuración pura (una lista de puntos en el espacio de la imagen por cámara), no código, así que no hay razón para esperar: **créalos durante el proceso de etiquetado de verdad de referencia (hito 3)**, mientras de todas formas estás revisando cuadros de esa cámara y puedes ver exactamente dónde cae el límite de la entrada. Guárdalos en `zones/<camera_id>.json` dentro del paquete de sitio (§1.19, v11.3), junto al perfil de cámara de §0. Un polígono de zona describe la planta de una casa real, así que no pertenece a un repositorio público.
+
+**Adición v11.3 — mide los puntos de calibración del suelo en la misma sesión.** La homografía de §4.2 sigue siendo de fase 2, pero su insumo es una medición física: puntos del suelo con su posición en metros y en píxeles. Tomarla mientras dibujas las zonas cuesta unos minutos; tomarla después obliga a volver frente a la cámara, y si la cámara se movió entre tanto, las zonas también dejan de ser válidas. Cuatro reglas para que la medición sirva:
+
+- Mide **al menos 5 puntos**: cuatro determinan \(H\) y el resto quedan como puntos de control para medir el error de reproyección (§1.17).
+- **Repártelos por toda la zona** y no en una esquina. Cuatro puntos agrupados o casi alineados dan una \(H\) mal condicionada, que amplifica cualquier error de medición lejos de ellos.
+- Las coordenadas en píxeles deben estar en el **mismo espacio que usa el tracker**: el substream después de la corrección de aspecto, si la hay (§0, §1.3).
+- Una \(H\) por plano: escalones o un patio elevado necesitan su propio conjunto de puntos (§4.2).
+
+```yaml
+# <VVA_SITE_DIR>/calibration/<camera_id>.yaml (v11.3) — measured at milestone 3, consumed by §4.2 in phase 2
+ground_plane:
+  plane: driveway                       # one H per flat plane (§4.2 caveats)
+  image_space: substream_after_aspect_correction
+  points:                               # >= 5: 4 to solve H, the rest to check reprojection error
+    - {px: [<u1>, <v1>], m: [0.0, 0.0]}
+    - {px: [<u2>, <v2>], m: [<x2>, <y2>]}
+    - {px: [<u3>, <v3>], m: [<x3>, <y3>]}
+    - {px: [<u4>, <v4>], m: [<x4>, <y4>]}
+    - {px: [<u5>, <v5>], m: [<x5>, <y5>]}
+  measured_on: <date>
+```
 
 ```yaml
 # config/events.yaml (v3)
@@ -475,7 +553,7 @@ events:
     minimum_track_age_seconds: 0.5
     minimum_mean_confidence: 0.35
   zone_rules:
-    zone_definitions: configs/zones/     # v3: authored at milestone 3, consumed by §1.2 and §1.5
+    zone_definitions: zones/             # v11.3: relative to VVA_SITE_DIR (§1.19), no longer to the repo — authored at milestone 3 (v3)
     require_confirmed_track: true
     entry_event_enabled: true            # MVP scope: ship this rule first
     crossing_event_enabled: false        # phase 2 — enable only after entry's FP rate is validated
@@ -522,7 +600,7 @@ Dos propiedades que hay que preservar: la cola debe estar acotada con una polít
 
 **Adición v4 — la API necesita un límite declarado de red/autenticación.** §1.9 es explícito en que Hailo-Ollama se enlaza únicamente a `127.0.0.1`; esta sección nunca hace la afirmación equivalente para la API que en realidad sirve el historial de eventos, el texto de enriquecimiento y los enlaces a clips de visitantes reales. Incluso para un despliegue en LAN privada, enlaza Uvicorn a una interfaz específica en lugar de `0.0.0.0`, y añade una verificación mínima de bearer-token en las rutas que no sean `/health` — un registro de eventos de cámara es exactamente el tipo de dato que no debería ser accesible por "cualquier otra cosa en la LAN" por defecto.
 
-**Adición v10 — ciclo de vida del bearer-token y seguridad de transporte.** La adición v4 anterior dice que hay que añadir una verificación de bearer-token, pero no cómo generar, almacenar o rotar el token, ni si la conexión está cifrada. Genera el token una sola vez con `secrets.token_urlsafe(32)` y guárdalo fuera del repositorio — una variable de entorno o un archivo con permisos `0600`, nunca un valor de configuración confirmado (committed) — ya que este token controla el acceso al historial de eventos, al texto de enriquecimiento y a los enlaces a clips de visitantes reales. Trata la rotación como un procedimiento manual y documentado para el MVP (regenera y redistribuye el token si se sospecha de un compromiso) en lugar de construir rotación automática en esta etapa temprana. Como la API es HTTP simple por defecto, colócala detrás de un proxy inverso mínimo con terminación TLS (por ejemplo, Caddy con certificados automáticos, o nginx con un certificado autofirmado para uso solo en LAN) en lugar de enviar bearer tokens en texto plano, incluso en una red de confianza.
+**Adición v10 — ciclo de vida del bearer-token y seguridad de transporte.** La adición v4 anterior dice que hay que añadir una verificación de bearer-token, pero no cómo generar, almacenar o rotar el token, ni si la conexión está cifrada. Genera el token una sola vez con `secrets.token_urlsafe(32)` y guárdalo fuera del repositorio — una variable de entorno o un archivo con permisos `0600`, nunca un valor de configuración confirmado (committed); desde v11.3 es `VVA_API_TOKEN` en el `secrets.env` del sitio (§1.19), uno distinto por casa — ya que este token controla el acceso al historial de eventos, al texto de enriquecimiento y a los enlaces a clips de visitantes reales. Trata la rotación como un procedimiento manual y documentado para el MVP (regenera y redistribuye el token si se sospecha de un compromiso) en lugar de construir rotación automática en esta etapa temprana. Como la API es HTTP simple por defecto, colócala detrás de un proxy inverso mínimo con terminación TLS (por ejemplo, Caddy con certificados automáticos, o nginx con un certificado autofirmado para uso solo en LAN) en lugar de enviar bearer tokens en texto plano, incluso en una red de confianza.
 
 **Para profundizar:**
 - [FastAPI official tutorial](https://fastapi.tiangolo.com/tutorial/) — la guía canónica de introducción, incluyendo la generación automática de documentación
@@ -725,7 +803,7 @@ observability:
 
 **Propósito.** Cada umbral de esta guía — `minimum_motion_ratio`, `confidence_threshold`, `min_iou_match`, `min_confirmed_hits`, `minimum_mean_confidence`, `kalman_sigma_accel_sq` — se ha descrito hasta ahora como "calibrado por escena de cámara", sin especificar calibrado *contra qué*. Sin verdad de referencia, ajustar es solo adivinar con pasos adicionales. Esta es la brecha individual más grande que identificó la revisión v2.
 
-**Cómo funciona.** Graba en disco el substream crudo (e, idealmente, el mainstream) de video para cada cámara durante un periodo representativo — incluyendo casos límite como transiciones de iluminación al atardecer/amanecer, árboles agitados por el viento y visitas de vehículos de reparto. Etiqueta a mano un CSV de eventos de verdad de referencia (`camera_id, event_type, start_ts, end_ts, condition, notes`) contra ese material grabado. Luego construye un **banco de reproducción** que alimenta el video grabado a través del *mismo* código de la canalización (pipeline) de producción (puerta de movimiento → detector → tracker → máquina de estados) usando un **reloj falso** impulsado por las marcas de tiempo de los fotogramas grabados en lugar de `time.monotonic()`, de modo que el filtro de Kalman parametrizado en el tiempo (§1.4), la tasa de aprendizaje de MOG2 (§1.2) y la lógica de enfriamiento (§1.5) se comporten de forma idéntica a una ejecución en vivo.
+**Cómo funciona.** Graba en disco el substream crudo (e, idealmente, el mainstream) de video para cada cámara durante un periodo representativo — incluyendo casos límite como transiciones de iluminación al atardecer/amanecer, árboles agitados por el viento y visitas de vehículos de reparto. Etiqueta a mano un CSV de eventos de verdad de referencia (`site_id, camera_id, event_type, start_ts, end_ts, condition, notes`; `site_id` desde v11.3) contra ese material grabado. Luego construye un **banco de reproducción** que alimenta el video grabado a través del *mismo* código de la canalización (pipeline) de producción (puerta de movimiento → detector → tracker → máquina de estados) usando un **reloj falso** impulsado por las marcas de tiempo de los fotogramas grabados en lugar de `time.monotonic()`, de modo que el filtro de Kalman parametrizado en el tiempo (§1.4), la tasa de aprendizaje de MOG2 (§1.2) y la lógica de enfriamiento (§1.5) se comporten de forma idéntica a una ejecución en vivo.
 
 ```python
 class FakeClock:
@@ -765,11 +843,13 @@ Sobre las puertas de CI en específico: con 23 eventos etiquetados, una precisi�
 
 **Adición v7 — la división `day` / `night_ir` se especificó en cinco lugares (la nota de revisión v4 de esta sección, la corrección v4 de §1.3, la adición v5 de §1.2, los criterios de salida del hito 3, y la lista de verificación de preparación) pero nunca se implementó realmente en `eval.yaml`.** La lista `metrics:` de abajo era enteramente a nivel de evento, así que nada calculaba el recall del detector por fotograma que §1.3 necesita para distinguir una brecha de dominio genuina de un `confidence_threshold` mal ajustado — un número a nivel de evento mezcla el desempeño del detector con el comportamiento del tracker y la máquina de estados por encima de él. Se añadió un campo `conditions: [day, night_ir]` y un campo `condition_source` al bloque `split:` para que cada métrica se reporte por condición en lugar de agrupada entre ambas; se añadió una lista separada `detector_metrics: [per_frame_recall, per_frame_precision]` junto a `metrics:`, ya que estas se calculan directamente contra las detecciones crudas por fotograma en lugar de eventos emparejados; y se añadió una entrada `negative_test_cases:` para el caso de insectos con IR de §1.2, que espera cero eventos emitidos a pesar de una actividad sostenida en la etapa del detector. El esquema del CSV de verdad de referencia de arriba ahora incluye una columna `condition`, ya que de otro modo no había dónde registrar a cuál de `day` / `night_ir` pertenece un evento etiquetado — sin ella, el banco de pruebas no tiene forma de calcular nada por condición sin importar lo que pida `eval.yaml`.
 
+**Adición v11.3 — para instalar en otras casas, la unidad de generalización es la casa, no el día.** Dividir por día mide si los umbrales ajustados en unos días funcionan en otro día de la **misma escena**: mismo lente, misma altura, mismo fondo. Una casa nueva cambia todo eso a la vez, así que es una distribución distinta, y un número del día reservado no dice nada sobre ella. Medirlo exige validación dejando una casa fuera (*leave-one-site-out*), lo cual requiere al menos dos sitios etiquetados. Mientras haya uno, el banco debe decirlo de forma explícita en su salida, en lugar de dejar que el día reservado se lea como si cubriera ese caso. Dos cambios baratos ahora para no migrar datos después: la columna `site_id` en el CSV, y la clave de cámara `(site_id, camera_id)`, porque un `camera_id` como `front` solo es único dentro de una casa. Por la misma razón, el banco reporta dos hashes además del combinado: `defaults_hash` (cambia con el código) y `site_hash` (cambia con la instalación), de modo que una métrica que se movió con el mismo `defaults_hash` apunta a la configuración del sitio y no al código.
+
 ```yaml
-# config/eval.yaml (v8)
+# config/eval.yaml (v8, v11.3)
 eval:
-  recordings_dir: data/recordings/
-  ground_truth_csv: data/ground_truth_events.csv
+  recordings_dir: data/recordings/            # v11.3: laid out as <site_id>/<camera_id>/ — camera ids are only unique within a site
+  ground_truth_csv: data/ground_truth_events.csv   # v11.3: first column is site_id
 
   # v3: the matching rule — without this, precision/recall are undefined
   matching:
@@ -786,11 +866,16 @@ eval:
     conditions: [day, night_ir]       # v7: report every metric per condition, not pooled
     condition_source: ground_truth_csv.condition   # v7: read from the CSV's condition column
     reject_unresolved_placeholders: true   # v9: replay_runner.py fails fast if tuning_days/heldout_days still match <...>
+    site_source: ground_truth_csv.site_id  # v11.3
+    heldout_sites: []                 # v11.3: leave-one-site-out needs >= 2 labeled sites; empty means "not measured"
+    report_site_generalization: true  # v11.3: with a single site, print "cross-site generalization: not measured" instead of omitting it
   report_sample_size: true
   report_confidence_intervals: true
   confidence_interval_method: wilson       # v4: was an implicit Wald/normal approximation
   emit_per_stage_traces: true              # v4: detection / confirmed-track / event-level, not just final matches
   config_hash: null                        # v6: populated at run time — SHA-256 over every loaded config file, reported alongside n_labeled_events
+  defaults_hash: null                      # v11.3: SHA-256 over configs/*.yaml only — changes with code releases
+  site_hash: null                          # v11.3: SHA-256 over the site bundle minus secrets.env — changes with the installation
 
   metrics: [precision, recall, f1, mean_latency_to_event_ms]
   detector_metrics: [per_frame_recall, per_frame_precision]   # v7: per-frame, detector-stage only — isolates a domain gap from a threshold problem
@@ -849,7 +934,7 @@ pre_roll:
   cut_on_keyframe: true            # v3: search back to the nearest preceding IDR
   record_achieved_pre_roll: true   # v3: log what you actually got, not what you asked for
   expected_camera_gop_seconds: 1.0 # v3: set camera-side (§1.1); assert at startup if detectable
-  clip_output_dir: /mnt/ssd/clips/
+  clip_output_dir: null            # v11.3: no absolute paths in defaults — set storage.clips_dir in site.yaml (§1.19)
 ```
 
 **Lecturas adicionales:**
@@ -871,7 +956,7 @@ pre_roll:
 - **Desgaste de escritura de la tarjeta SD.** Las escrituras continuas de SQLite WAL (§1.6) más las escrituras frecuentes de logs son exactamente el patrón de acceso que acorta la vida de una tarjeta microSD. Antes de la prueba de resistencia, mueve el archivo de base de datos SQLite **y** el directorio de clips a un **SSD conectado por USB** en lugar de la microSD de arranque — los SSD tienen una resistencia de escritura mucho mayor y su modo de falla (degradación lenta, reportable por SMART) es mucho más seguro que una tarjeta SD que se corrompe silenciosamente. Con el búfer de pre-grabación (§1.12) escribiendo ahora clips continuamente al disparar, esto ya no es opcional.
 - **Batería de RTC (v3).** Instala la pila de moneda (§1.10). Las marcas de tiempo de los eventos de un Pi que arrancó sin una son incorrectas hasta la sincronización NTP.
 - **Salud del NPU (v3).** La política de fallas en §1.3 necesita una verificación de arranque correspondiente en la unidad de servicio: verifica que `hailortcli fw-control identify` tenga éxito antes de que la aplicación inicie, para que un desajuste de controlador/firmware después de un `apt upgrade` se manifieste como una falla de arranque limpia en lugar de una excepción en tiempo de ejecución a las 3 a.m.
-- **Licenciamiento.** Como se señaló en §1.3, Ultralytics YOLOv8 se distribuye bajo AGPL-3.0. No es un impedimento para un MVP privado, pero resuélvelo *antes* de decidir hacer de código abierto el repositorio como pieza de portafolio — ya sea manteniendo el repositorio privado, aislando el código de entrenamiento/exportación derivado de Ultralytics de cualquier código de aplicación publicado, o presupuestando una licencia Ultralytics Enterprise si la redistribución amplia es una meta.
+- **Licenciamiento.** Como se señaló en §1.3, Ultralytics YOLOv8 se distribuye bajo AGPL-3.0. No es un impedimento para un MVP privado, pero resuélvelo *antes* de decidir hacer de código abierto el repositorio como pieza de portafolio — ya sea manteniendo el repositorio privado, aislando el código de entrenamiento/exportación derivado de Ultralytics de cualquier código de aplicación publicado, o presupuestando una licencia Ultralytics Enterprise si la redistribución amplia es una meta. **v11.3:** el repositorio ya es público; esto ahora es la compuerta de §1.3, que además bloquea cualquier instalación en un dispositivo ajeno o uso comercial.
 - **Supervisión de procesos (v4).** Todo lo anterior cubre la falla al *iniciar*; nada en v1–v3 cubre un cierre inesperado (crash), un bloqueo (hang) o un OOM una vez que la canalización ya está en ejecución — un segfault en los bindings nativos de `cv2`/HailoRT, el OOM-killer del kernel una vez que el LLM de enriquecimiento residente (§1.9) compite con el resto del proceso por RAM, o un hilo en segundo plano que se traba sin matar el proceso principal. Ejecuta la aplicación bajo una unidad de `systemd` con `Restart=on-failure`, un retroceso (backoff) `RestartSec`, y `StartLimitIntervalSec`/`StartLimitBurst` para que una falla persistente reinicie de forma limpia en lugar de entrar en un ciclo de fallas eterno ([patrones de reinicio/confiabilidad de systemd](https://forums.raspberrypi.com/viewtopic.php?t=376126), [guía práctica de confiabilidad de servicios en Raspberry Pi](https://www.dzombak.com/blog/2023/12/keep-your-software-up-and-running-on-the-raspberry-pi/)). Añade `WatchdogSec=` con un latido (heartbeat) periódico mediante `sd_notify` desde el bucle principal para que systemd también pueda detectar un proceso **bloqueado**, no solo uno que se cerró de forma inesperada — esta es la mejora de confiabilidad más económica disponible y sirve directamente al propio objetivo de la prueba de resistencia.
 - **Corrección v11 — el latido debe verificar los hilos trabajadores (worker threads), no solo su propio pulso.** Tal como se especificó arriba, el latido solo demuestra que el hilo que llama a `sd_notify` sigue en su bucle; no dice nada sobre el hilo dedicado de escritura de SQLite (§1.6) ni sobre el hilo consumidor de notificaciones (§1.14). Si cualquiera de los dos muere por una excepción no capturada (un error de E/S de disco, una fila malformada, una excepción del cliente HTTP), el bucle principal sigue enviando `WATCHDOG=1`, el interruptor de hombre muerto (dead-man's switch) (§1.14) sigue recibiendo pings, y `/health` permanece saludable — porque ninguna de esas tres señales inspecciona nunca el estado de los hilos trabajadores, solo la actividad del proceso y el estado del NPU/desactualización (staleness) (§1.7). Los eventos entonces se acumulan en cola, alcanzan `queue_max_size` (§1.14), y se descartan silenciosamente vía `events_dropped_total`, un contador sobre el que nada genera alertas. Condiciona el latido a que los tres hilos estén vivos, de modo que un trabajador muerto detenga el latido, dispare el watchdog, y fuerce exactamente la ruta de recuperación de fallas + alerta fuera de proceso ya construida arriba:
 
@@ -895,19 +980,19 @@ pre_roll:
 
   [Service]
   Type=oneshot
-  # NOTIFY_WEBHOOK_URL — same webhook as config/notify.yaml, never committed.
+  # VVA_NOTIFY_WEBHOOK_URL — per-site secret from the site bundle (§1.19, v11.3), never committed.
   # v11 fix: systemd does NOT support trailing/inline comments on a unit directive —
   # anything after `EnvironmentFile=<path>` on the same line becomes part of the path
   # value, so the line below must carry no comment of its own.
-  EnvironmentFile=/etc/camera/notify.env
-  ExecStart=/usr/bin/curl -fsS -d "%i entered failed state on %H" "${NOTIFY_WEBHOOK_URL}"
+  EnvironmentFile=/etc/vva/site/secrets.env
+  ExecStart=/usr/bin/curl -fsS -d "%i entered failed state on %H" "${VVA_NOTIFY_WEBHOOK_URL}"
   ```
 
 - **Presupuesto de memoria de todo el sistema (v4).** §1.9 ya señala la contención de memoria del *dispositivo* NPU entre el detector y el LLM de enriquecimiento residente; la misma disciplina aplica a la RAM del host. El conjunto concurrente en un solo Pi 5 es: el hilo del buzón (mailbox) RTSP, el hilo de desmultiplexado de pre-grabación de PyAV, el runtime de HailoRT, Uvicorn/FastAPI, APScheduler, SQLite (WAL), y el registro (logging) — sin ningún límite de RAM definido en ningún lugar. Haz un presupuesto aproximado durante el pico de exploración fuera de línea del hito 1 (con el modelo de enriquecimiento residente, ya que ese es el peor caso) y expón la memoria del host en `/metrics` junto con los contadores existentes de NPU/dispositivo, para que un crecimiento lento de memoria durante la prueba de resistencia sea visible antes de convertirse en un OOM kill.
 - **Retención vs. capacidad (v4).** `disk_full_policy` arriba es una política de *capacidad* — solo se activa bajo presión de almacenamiento. No hay una purga independiente por edad máxima, ni una postura declarada sobre grabar incidentalmente a personas que no son del hogar (repartidores, carteros, vecinos que pasan por el límite de la zona). Incluso para un MVP residencial privado, define un `max_retention_days` explícito para los clips independiente del uso de disco, y decide de antemano por cuánto tiempo se conserva el material de personas ajenas al hogar.
 
 ```yaml
-# config/hardening.yaml (v4)
+# config/hardening.yaml (v4, v11.3)
 hardening:
   disk_full_policy: evict_oldest_clips_keep_event_rows
   max_retention_days: 30                        # v4: age-based purge, independent of disk pressure
@@ -915,9 +1000,7 @@ hardening:
     handler: RotatingFileHandler
     max_bytes: 10485760      # 10 MB per file
     backup_count: 5
-  storage:
-    sqlite_db_path: /mnt/ssd/camera_events.db   # moved off the boot microSD before soak testing
-    clips_dir: /mnt/ssd/clips/
+  storage:                                      # v11.3: sqlite_db_path and clips_dir moved to site.yaml (§1.19) — still on a USB SSD, never the boot microSD
     minimum_free_gb: 5                          # v3: eviction trigger, not "wait for ENOSPC"
   startup_checks:                               # v3: fail-fast, before the ingestion thread starts
     - hailo_device_identify
@@ -939,6 +1022,7 @@ hardening:
     yolo_toolchain_license: AGPL-3.0
     safe_for_private_use: true
     requires_review_before_open_source: true
+    commercial_or_third_party_install: blocked   # v11.3: gate from §1.3 — unblock only after choosing AGPL / Enterprise / permissive detector
 ```
 
 **Lecturas adicionales:**
@@ -964,13 +1048,16 @@ hardening:
 
 **Adición v11 — un interruptor de hombre muerto, porque el consumidor v9 comparte destino con lo que vigila.** El consumidor de `/health` de arriba se ejecuta *dentro* del proceso de la canalización, así que puede reportar "degradado pero en ejecución" y nada más: un cierre inesperado, un OOM kill, systemd rindiéndose después de `start_limit_burst: 5`, un corte de energía, o una conexión de red perdida, todos lo silencian justo en el momento en que importa. Dos mecanismos cierran esto, y cubren conjuntos de fallas **disjuntos**: la unidad `OnFailure=` de §1.13 reporta un proceso que ha muerto, se ha bloqueado, o ha agotado su presupuesto de reinicios, pero necesita que systemd y la red estén vivos para hacerlo; el interruptor de hombre muerto de abajo no necesita ninguno de los dos — un trabajo de APScheduler (§1.8, ya en el stack) emite un ping HTTP a un extremo externo cada `interval_seconds`, y el servicio *externo* genera la alerta cuando los pings se detienen por más tiempo que `grace_period_seconds`. Es el único mecanismo en este documento que detecta pérdida de energía, pérdida de red, o un kernel bloqueado, precisamente porque la alerta se decide en algún lugar que el Pi no puede derribar consigo. Hacer ping es un trabajo, no una verificación de salud — no debe depender del bucle de fotogramas ni del hilo escritor, o heredaría sus modos de falla.
 
+**Corrección v11.3 — los destinos de alerta son de cada casa.** El bloque anterior tenía la URL del webhook escrita en `notify.yaml`, que es un default compartido por todas las instalaciones. En un servidor público de ntfy el nombre del tema funciona como contraseña: quien lo conoce recibe las alertas. Si ese valor vive en los defaults, dos casas terminan compartiendo canal. Los tres destinos (webhook, Telegram y dead-man's switch) se leen ahora por nombre de variable de entorno desde el `secrets.env` del sitio (§1.19), y §1.18 falla al arrancar si alguno falta mientras su canal está habilitado.
+
 ```yaml
-# config/notify.yaml (v11)
+# config/notify.yaml (v11, v11.3)
 notify:
   enabled: true
   provider: webhook             # v5: webhook is the baseline outbox channel — ntfy/pushover/mqtt are all webhook-shaped
-  base_url: https://ntfy.sh/<topic>
+  webhook_url_env: VVA_NOTIFY_WEBHOOK_URL   # v11.3: per-site secret (§1.19) — on a public ntfy server the topic name works as a password
   secondary_provider: telegram  # v5: additive second channel once the webhook path is proven, per the outbox decision above
+  secondary_credentials_env: [VVA_TELEGRAM_BOT_TOKEN, VVA_TELEGRAM_CHAT_ID]   # v11.3: one chat per household
   throttle:                     # v11.2: moved from events.yaml; throttles notifications, never events
     same_camera_same_event_seconds: 10
     record_suppressed: true     # every suppressed notification is persisted and counted
@@ -985,7 +1072,7 @@ notify:
   watch_health_endpoint: true          # v9: second consumer path, independent of the §1.6 writer-thread queue above
   dead_mans_switch:                    # v11: external service alerts when pings stop — the only path that survives power/network/kernel loss
     enabled: true
-    ping_url: https://<dead-mans-switch-service>/ping/<check-id>   # secret-bearing URL: env var or 0600 file, never committed (same rule as §1.7)
+    ping_url_env: VVA_DMS_PING_URL     # v11.3: per-site secret in secrets.env (§1.19) — one check per house, never shared
     interval_seconds: 60
     grace_period_seconds: 180          # external alert fires after this long without a ping; ≥ 2× interval to tolerate one lost ping
 ```
@@ -1068,15 +1155,129 @@ def validate_config(cfg) -> None:
             "boxes below the tracker's low-confidence tier."
         )
     for camera_id in cfg.cameras:
-        zone_path = cfg.events.zone_rules.zone_definitions / f"{camera_id}.json"
+        zone_path = cfg.site_dir / cfg.events.zone_rules.zone_definitions / f"{camera_id}.json"   # v11.3: zones live in the site bundle
         if not zone_path.exists():
             raise ConfigError(f"missing zone polygon file for camera '{camera_id}': {zone_path}")
 ```
 
 Esto verifica exactamente los dos invariantes nombrados arriba — `detector.confidence_threshold == tracker.low_confidence_threshold` (§1.3/§1.4) y que cada cámara configurada tenga un archivo de polígono de zona (§1.2/§1.5) — y genera una excepción en lugar de una advertencia, coincidiendo con la filosofía de fallo temprano ya usada para las verificaciones de NPU y almacenamiento en otras partes de este documento. No reemplaza la revisión cuidadosa de los once archivos YAML; detecta la clase específica de desincronización que ya ha causado errores reales en la propia historia de este proyecto. La validación se ejecuta solo en el arranque: un cambio de configuración solo surte efecto después de un reinicio del servicio, y no existe ni está planeada ninguna ruta de recarga en caliente (hot-reload) para el MVP (ver `docs/post-mvp-backlog.md`).
 
+**Adición v11.3 — invariantes del paquete de sitio.** El paquete de §1.19 agrega una segunda fuente de configuración, y con ella una nueva forma de desincronizarse: una clave mal escrita en `site.yaml` no da error; simplemente no se aplica y el default sigue activo sin que nadie lo note. Las invariantes siguientes corren antes de `validate_config()`, con la misma regla: excepción, nunca advertencia.
+
+```python
+# src/config/validate.py (v11.3) — site-bundle invariants, run before validate_config()
+import os, re
+from pathlib import Path
+
+SITE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
+PLACEHOLDER = re.compile(r"<[^>]+>")
+
+def _keys(d, prefix=""):   # leaf paths only, e.g. "tracker.min_iou_match"
+    for k, v in d.items():
+        path = f"{prefix}{k}"
+        if isinstance(v, dict):
+            yield from _keys(v, path + ".")
+        else:
+            yield path
+
+def _scalars(d):
+    for v in d.values():
+        if isinstance(v, dict):
+            yield from _scalars(v)
+        elif isinstance(v, list):
+            yield from (x for x in v if not isinstance(x, (dict, list)))
+        else:
+            yield v
+
+def validate_site(defaults: dict, site: dict, site_dir: Path) -> list[str]:
+    if not SITE_ID.match(site.get("site_id", "")):
+        raise ConfigError("site_id must be a lowercase slug such as 'casa-roma'")
+    # 1) An override may only change a key that already exists in the defaults:
+    #    a typo must fail, not be silently ignored while the default stays active.
+    unknown = sorted(set(_keys(site.get("overrides", {}))) - set(_keys(defaults)))
+    if unknown:
+        raise ConfigError(f"site overrides unknown keys: {unknown}")
+    # 2) Defaults are shared by every house, so they carry no house-specific paths.
+    bad = [v for v in _scalars(defaults) if isinstance(v, str) and v.startswith("/")]
+    if bad:
+        raise ConfigError(f"absolute paths belong in site.yaml, not in configs/: {bad}")
+    # 3) Every camera is complete: profile, zones and its secrets.
+    for camera_id in site["cameras"]:
+        for rel in (f"cameras/{camera_id}.yaml", f"zones/{camera_id}.json"):
+            path = site_dir / rel
+            if not path.exists():
+                raise ConfigError(f"missing {rel} in site bundle {site_dir}")
+            if PLACEHOLDER.search(path.read_text()):
+                raise ConfigError(f"unfilled <...> placeholder in {path}")
+        env_id = camera_id.upper().replace("-", "_")
+        for var in (f"VVA_CAM_{env_id}_SUB_URL", f"VVA_CAM_{env_id}_MAIN_URL"):
+            if var not in os.environ:   # report the NAME only, never a value
+                raise ConfigError(f"missing secret {var} (expected in {site_dir}/secrets.env)")
+    # 4) Storage paths are mandatory and absolute — only the site knows its disks.
+    for key in ("sqlite_db_path", "clips_dir"):
+        if not Path(site["storage"].get(key) or "").is_absolute():
+            raise ConfigError(f"storage.{key} must be an absolute path in site.yaml")
+    # Returned so startup can log which defaults this house overrides.
+    return sorted(set(_keys(site.get("overrides", {}))))
+```
+
+La lista que devuelve `validate_site()` se escribe en el log de arranque y en la salida del banco (§1.11). En un negocio, es la respuesta a la pregunta «¿en qué se aparta esta casa de las demás?».
+
 **Lecturas adicionales:**
 - [Pydantic Settings documentation](https://pydantic.dev/docs/validation/latest/concepts/pydantic_settings/) — una capa de configuración tipada/validación ya lista sobre la que se puede construir este módulo
+
+---
+
+### 1.19 Paquete de sitio: separar el código de la casa — `src/config/site.py` *(adición v11.3)*
+
+**Propósito.** Hasta v11.2, todo lo configurable vivía en `configs/` dentro del repositorio: los umbrales del algoritmo junto a las zonas de esta casa, las rutas de su SSD y la URL de su canal de alertas. Mientras haya una sola instalación, esa mezcla no se nota. En una segunda casa obliga a elegir entre dos malas opciones: copiar el repositorio por cliente (y aplicar cada corrección del tracker N veces) o editar a mano los YAML compartidos en cada instalación (y perder la trazabilidad de qué valor corre dónde). Hay además una razón que aplica hoy mismo: el repositorio es público, y los polígonos de zona, los perfiles de cámara y los puntos de calibración describen la planta de una casa real.
+
+**Cómo funciona.** La configuración se divide en dos capas con un criterio de una sola pregunta: **¿cambia este valor si instalo la misma versión del código en otra casa?** Si cambia, es del sitio; si no, es un default.
+
+| Capa | Dónde vive | Qué contiene | Quién la cambia |
+|---|---|---|---|
+| Defaults | `configs/*.yaml` en el repositorio, versionados | Umbrales, algoritmos, políticas, presupuestos, reglas de evaluación | Un commit, igual que el código |
+| Sitio | `VVA_SITE_DIR` (por defecto `/etc/vva/site/`), fuera del repositorio | `site_id`, zona horaria, cámaras y su perfil, zonas, calibración de suelo, rutas de almacenamiento, sobrescrituras de umbrales | La instalación |
+| Secretos del sitio | `VVA_SITE_DIR/secrets.env`, permisos `0600` | Credenciales de cámara, webhook, Telegram, dead-man's switch, token de la API | La instalación; nunca se copian a otra casa |
+
+```text
+configs/                        # repo: defaults shared by every installation (versioned)
+configs/site.example/           # repo: synthetic template of a bundle, no real data
+$VVA_SITE_DIR/                  # per installation, outside the repo (default /etc/vva/site/)
+  site.yaml                     # site_id, timezone, cameras, storage paths, overrides
+  cameras/<camera_id>.yaml      # camera profile + pixel budget (§0)
+  zones/<camera_id>.json        # zone polygons (§1.5)
+  calibration/<camera_id>.yaml  # ground-plane points for §4.2 (§1.5)
+  secrets.env                   # 0600 — VVA_CAM_*, VVA_NOTIFY_*, VVA_TELEGRAM_*, VVA_DMS_*, VVA_API_TOKEN
+```
+
+```yaml
+# <VVA_SITE_DIR>/site.yaml (v11.3) — one per installation, never committed
+site:
+  site_id: casa-principal
+  timezone: America/Mexico_City       # display and notification text only; events still store UTC + monotonic (§1.6)
+  cameras: [front]                    # each id needs cameras/<id>.yaml and zones/<id>.json in this bundle
+  storage:
+    sqlite_db_path: /mnt/ssd/camera_events.db   # moved here from hardening.yaml
+    clips_dir: /mnt/ssd/clips/                  # moved here from pre_roll.yaml / hardening.yaml
+  overrides:                          # only keys that already exist in configs/*.yaml (§1.18); logged at startup
+    tracker:
+      max_centroid_distance_px: 120   # pixel-space values are site-dependent until §4.2 (§1.4)
+```
+
+Tres reglas de diseño, cada una con su porqué:
+
+1. **Solo dos capas, y en un orden fijo:** defaults, luego `site.overrides`. Los diccionarios se fusionan y los escalares y listas se reemplazan. No hay una tercera capa de variables de entorno para valores de configuración: cada capa extra es otro lugar del que puede venir un valor, que es exactamente la desincronización que §1.18 existe para atrapar. Las variables de entorno quedan reservadas para secretos.
+2. **Una sobrescritura no puede crear claves.** Si la clave no existe en los defaults, el arranque falla (§1.18). Sin esta regla, `max_centroid_distnce_px` en `site.yaml` se ignora en silencio y la casa corre con el default creyendo que lo cambió.
+3. **Tres hashes en lugar de uno.** `config_hash` (§1.11, v6) identifica la configuración combinada; `defaults_hash` y `site_hash` dicen cuál de las dos capas cambió. `secrets.env` queda fuera de los hashes y nunca se registra: cambiar una contraseña no debe parecer un cambio de comportamiento.
+
+Para desarrollo y CI, `configs/site.example/` es un paquete completo con valores sintéticos (cámara `front`, rutas bajo `/tmp`, sin secretos reales). Así las pruebas ejercitan la misma carga de dos capas que corre en la Pi, sin datos de ninguna casa en el repositorio. En la Pi, la unidad de systemd carga `secrets.env` con `EnvironmentFile=` (§1.13) y fija `VVA_SITE_DIR` si no es el valor por defecto.
+
+**Qué no hace todavía.** No instala, no actualiza ni monitorea casas a distancia. El paquete de sitio es la condición para que esas piezas puedan existir sin tocar el código, pero diseñarlas antes de tener una segunda casa sería adivinar (ver el final de §3).
+
+**Lecturas adicionales:**
+- [The Twelve-Factor App — III. Config](https://12factor.net/config) — el argumento clásico para separar la configuración de despliegue del código
+- [systemd.exec — `EnvironmentFile=`](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#EnvironmentFile=) — cómo systemd carga `secrets.env` y por qué la línea no admite comentarios en línea (§1.13, v11.1)
 
 ---
 
@@ -1100,6 +1301,7 @@ Esto verifica exactamente los dos invariantes nombrados arriba — `detector.con
 | Detección de manipulación/obstrucción (v4) | Luminancia/varianza de los fotogramas decodificados | Señal de salud `tamper_suspected` | Un lente cubierto o reapuntado que se lee como "una escena tranquila" |
 | Supervisión de proceso + presupuesto de memoria (v4) | Unidad de systemd + RAM del host en `/metrics` | Reinicio automático, detección de bloqueo, advertencia de OOM | Un proceso caído o atascado que detiene silenciosamente todo el sistema |
 | Pruebas unitarias / CI (v4; escritas por hito a partir de v6) | Funciones puras (IoU, `Q(Δt)`, polígono, homografía) | Aprobado/fallido en cada commit | Una regresión barata que aparece semanas después como una caída inexplicable de una métrica del banco de reproducción |
+| Paquete de sitio + validación (v11.3) | `configs/` (defaults) + `VVA_SITE_DIR` (casa) | Configuración combinada, lista de sobrescrituras, `defaults_hash`/`site_hash` | Bifurcar el código por casa; datos de una casa real en un repositorio público; una clave mal escrita ignorada en silencio |
 
 ---
 
@@ -1115,10 +1317,10 @@ El ritmo propuesto asume trabajo incremental de medio tiempo (tardes/fines de se
 
 | # | Hito | Ventana objetivo | Criterios de salida |
 |---|---|---|---|
-| **0** | **Presupuesto de píxeles y decisión de lente** | 8 sep – 13 sep, 2026 | Altura en píxeles medida de una persona en el límite de zona de cada cámara; decisión escrita sobre el lente (2.8 vs 4.0 mm), resolución del substream, inferencia con recorte vs. fotograma completo, y YOLOv8n vs. YOLOv8s (§0) |
-| 1 | YOLOv8n en Hailo-10H — spike sin conexión | 14 sep – 20 sep, 2026 | `yolov8n_h10h.hef` carga y devuelve detecciones de personas contra un `.mp4` **grabado** (no se necesita cámara en vivo); salida HEF INT8 verificada contra Ultralytics FP32 en los mismos fotogramas (§1.3); implementadas la política de fallo temprano en el arranque y de fallo mid-run de la NPU; **v5: costo de decodificación por software H.264 del substream objetivo medido directamente contra el `.mp4` grabado (duración por fotograma y utilización del núcleo), reemplazando el presupuesto asumido `decode: 25 ms` por un valor medido (§1.10)** |
-| 2 | Ingesta RTSP + captura con hilos | 21 sep – 27 sep, 2026 | Substream en vivo a través del buzón de una sola ranura (§1.10) con reconexión de backoff exponencial y detección de datos obsoletos; cada fotograma lleva marcas de tiempo monotónicas y UTC; GOP de la cámara configurado a ~1 s (§1.1); **v11: credenciales ONVIF cargadas desde variables de entorno; ninguna credencial presente en ningún lugar del repositorio (§1.1)**. **Iniciar la grabación continua 24/7 al final de esta semana y dejarla corriendo hasta el hito 6** |
-| 3 | Polígonos de zona, etiquetado y banco de reproducción | 28 sep – 4 oct, 2026 | Polígonos de zona elaborados en `configs/zones/` (§1.5); CSV de verdad de referencia etiquetado a partir del metraje de la semana 2, **explícitamente dividido en `day` / `night_ir` (§1.3, v4)**; `replay_runner.py` (§1.11) reproduce a través del pipeline real con un reloj simulado y reporta precisión/recall **con la regla de coincidencia y la partición reservada configuradas explícitamente**, usando un **intervalo de puntaje de Wilson y trazas por etapa en lugar de un IC de Wald (§1.11, v4)** — construido antes de ajustar cualquier umbral; **v11: la prueba negativa `night_ir_insect` pasa — cero eventos emitidos en las ventanas etiquetadas de actividad de insectos (§1.11)** |
+| **0** | **Presupuesto de píxeles y decisión de lente** | 8 sep – 13 sep, 2026 | Altura en píxeles medida de una persona en el límite de zona de cada cámara; decisión escrita sobre el lente (2.8 vs 4.0 mm), resolución del substream, inferencia con recorte vs. fotograma completo, y YOLOv8n vs. YOLOv8s (§0); **v11.3: perfil de cámara en el paquete de sitio, con la SAR del substream registrada (§0, §1.19)** |
+| 1 | YOLOv8n en Hailo-10H — spike sin conexión | 14 sep – 20 sep, 2026 | `yolov8n_h10h.hef` carga y devuelve detecciones de personas contra un `.mp4` **grabado** (no se necesita cámara en vivo); salida HEF INT8 verificada contra Ultralytics FP32 en los mismos fotogramas (§1.3); implementadas la política de fallo temprano en el arranque y de fallo mid-run de la NPU; **v5: costo de decodificación por software H.264 del substream objetivo medido directamente contra el `.mp4` grabado (duración por fotograma y utilización del núcleo), reemplazando el presupuesto asumido `decode: 25 ms` por un valor medido (§1.10)**; **v11.3: si la SAR ≠ 1, DETECTION_EVAL de ambas variantes (sin corregir / píxeles cuadrados) sobre los mismos fotogramas, con la decisión registrada en `aspect_correction` (§0, §1.3)** |
+| 2 | Ingesta RTSP + captura con hilos | 21 sep – 27 sep, 2026 | Substream en vivo a través del buzón de una sola ranura (§1.10) con reconexión de backoff exponencial y detección de datos obsoletos; cada fotograma lleva marcas de tiempo monotónicas y UTC; GOP de la cámara configurado a ~1 s (§1.1); **v11: credenciales ONVIF cargadas desde variables de entorno; ninguna credencial presente en ningún lugar del repositorio (§1.1)**; **v11.3: con el esquema `VVA_CAM_<ID>_*`, desde el `secrets.env` del sitio (§1.19)**. **Iniciar la grabación continua 24/7 al final de esta semana y dejarla corriendo hasta el hito 6** |
+| 3 | Polígonos de zona, etiquetado y banco de reproducción | 28 sep – 4 oct, 2026 | Polígonos de zona elaborados en `zones/` del paquete de sitio (§1.5, §1.19); **v11.3: al menos 5 puntos de calibración de suelo medidos en la misma sesión (§1.5); columna `site_id` en el CSV y `defaults_hash`/`site_hash` en la salida del banco (§1.11)**; CSV de verdad de referencia etiquetado a partir del metraje de la semana 2, **explícitamente dividido en `day` / `night_ir` (§1.3, v4)**; `replay_runner.py` (§1.11) reproduce a través del pipeline real con un reloj simulado y reporta precisión/recall **con la regla de coincidencia y la partición reservada configuradas explícitamente**, usando un **intervalo de puntaje de Wilson y trazas por etapa en lugar de un IC de Wald (§1.11, v4)** — construido antes de ajustar cualquier umbral; **v11: la prueba negativa `night_ir_insect` pasa — cero eventos emitidos en las ventanas etiquetadas de actividad de insectos (§1.11)** |
 | 4 | Puerta de movimiento calibrada mediante el banco | 5 oct – 11 oct, 2026 | MOG2 + máscara derivada de zona (§1.2) con la prueba de sombra `== 255` y `learningRate` escalado por Δt; `minimum_motion_ratio` ajustado reejecutando el banco, no observando a simple vista un feed en vivo |
 | 5 | Tracker Kalman/IoU consciente del tiempo | 12 oct – 18 oct, 2026 | El tracker posee `min_confirmed_hits` y expone `track.is_confirmed`; `F(Δt)` se reconstruye en cada paso de predicción y `Q(Δt)` usa el bloque de ruido blanco continuo (§1.4/§4.1); la expiración es `max_missed_seconds`; `kalman_sigma_accel_sq` ajustado mediante el banco; **v6: pruebas unitarias de función pura de `IoU` y `Q(Δt)` escritas contra los valores de forma cerrada de §4.1** |
 | 6 | Máquina de estados de eventos — solo entrada | 19 oct – 25 oct, 2026 | La máquina de estados lee `track.is_confirmed` (sin conteo duplicado de hits); solo `entry_event_enabled` está activo; tasa de FP validada en el día **reservado** antes de iniciar el cruce/permanencia (§1.5); **v6: prueba unitaria de pertenencia a zona por punto-en-polígono escrita contra una forma de zona conocida** |
@@ -1181,7 +1383,7 @@ El ritmo propuesto asume trabajo incremental de medio tiempo (tardes/fines de se
 - [ ] Intervalo de GOP de la cámara reducido a ~1 s; duración de pre-grabación lograda registrada por evento
 - [ ] BD y clips en SSD USB; rotación de logs y desalojo por disco lleno verificados antes de la prueba de resistencia
 - [ ] `hailo-ollama` accesible solo en `127.0.0.1`; el enriquecimiento VLM permanece deshabilitado hasta probarse por separado
-- [ ] Implicaciones de AGPL-3.0 revisadas antes de cualquier decisión de hacer el repositorio de código abierto
+- [ ] Compuerta de licencia resuelta — AGPL-3.0 completo, Enterprise o detector permisivo — antes de cualquier instalación en un dispositivo ajeno o uso comercial; el repositorio público tiene un `LICENSE` elegido de forma consciente (§1.3, v11.3)
 - [ ] Unidad de systemd configurada con `Restart=on-failure`, `RestartSec`, `StartLimitIntervalSec`/`StartLimitBurst`, y latido de `WatchdogSec`/`sd_notify` (v4)
 - [ ] Presupuesto de memoria del host estimado con el modelo de enriquecimiento residente; expuesto en `/metrics` (v4)
 - [ ] Purga de `max_retention_days` definida independientemente del desalojo por disco lleno; postura de privacidad sobre visitantes ajenos al hogar decidida (v4)
@@ -1189,11 +1391,20 @@ El ritmo propuesto asume trabajo incremental de medio tiempo (tardes/fines de se
 - [ ] Canal de notificación dispara al confirmarse el evento sin bloquear la ingesta (v4)
 - [ ] Unidad de alerta `OnFailure=` verificada matando el proceso; dead-man's switch verificado apagando la Pi y recibiendo la alerta externa (v11)
 
+*Portabilidad (v11.3)*
+- [ ] Ningún dato de la casa en el repositorio: cámaras, zonas, calibración, rutas y secretos viven en `VVA_SITE_DIR` (§1.19)
+- [ ] El arranque rechaza claves de sitio desconocidas, rutas absolutas en los defaults y marcadores `<...>` sin llenar, y registra las claves que el sitio sobrescribe (§1.18)
+- [ ] El banco reporta `site_id`, `defaults_hash` y `site_hash`, y declara «generalización entre casas: no medida» mientras haya un solo sitio (§1.11)
+- [ ] SAR del substream registrada y `aspect_correction` decidida por medición (§0, §1.3)
+- [ ] `configs/site.example/` existe y es el paquete que usan las pruebas y el CI
+
 Una vez que esta lista de verificación esté completamente en verde para una cámara, la siguiente fase es generalizar a múltiples cámaras con aislamiento acotado de workers por cámara, verificaciones de salud y manejo de backpressure.
 
 **Corrección v6 — el cambio de decodificación H.265/HEVC pertenece aquí, no en los criterios de salida del hito 2 ni en la lista de verificación de preparación de una sola cámara.** La propia medición citada de la guía para la bandera `-hwaccel drm` en la Pi 5 es un ahorro de 13% → 9% de un núcleo de CPU (§1.10) — aproximadamente 1% de la CPU total en un pipeline de una sola cámara, no un cambio que valga la pena planear desde ahora, y uno que también afecta la ruta de remux de PyAV de §1.12, ya que el manejo de paquetes del búfer de pre-grabación asume el codec que sea que el mainstream esté entregando. Ese cálculo cambia una vez que las cámaras se generalizan: con cuatro streams de cámara, el mismo ahorro por núcleo se multiplica por cuatro, momento en el cual puede ser la diferencia entre encajar cómodamente en el presupuesto de CPU de la Pi 5 y no hacerlo. Si las cámaras soportan streaming de substreams H.265/HEVC (la mayoría de las cámaras PoE modernas lo hacen), reconfigura el codec del substream y decodifica a través del bloque HEVC de hardware real de la Pi 5 en lugar de H.264 por software como parte de este trabajo de generalización multi-cámara — un cambio de configuración del lado de la cámara, no un cambio de código. Configura correctamente la bandera: usa **`-hwaccel drm`**, no `v4l2m2m` — la Pi 5 no usa la misma ruta de decodificación V4L2 M2M que usaba la Pi 4, y el backend predeterminado FFmpeg/GStreamer de OpenCV no elige automáticamente un decodificador de hardware solo porque exista uno para el codec negociado, así que esto todavía debe configurarse explícitamente.
 
 **Adición v10 — el etiquetado continúa después del hito 3 de forma continua.** Los criterios de salida del hito 3 etiquetan un CSV de verdad de referencia a partir de una semana de metraje, lo cual por sí solo es poco probable que alcance `minimum_labeled_events_for_hard_gate: 100` (§1.11). Sigue agregando eventos etiquetados a partir de la grabación continua 24/7 en curso (iniciada al final del hito 2) a un ritmo regular después de que se entregue el hito 3, en lugar de tratar esa única pasada de etiquetado de una semana como el conjunto final de verdad de referencia del banco.
+
+**Adición v11.3 — lo que la portabilidad deja fuera de esta guía.** v11.3 hace que el código no dependa de una casa; no construye la operación de varias casas. Estas piezas dependen de lo que revele una segunda instalación y se registran en `docs/post-mvp-backlog.md`, no aquí: un procedimiento de instalación con modo sombra (detectar y registrar sin alertar durante las primeras 24–48 h); una imagen base reproducible del sistema; actualizaciones versionadas con reversión; un tablero central con el estado de salud de todas las casas (solo salud, nunca video); acceso remoto con consentimiento del cliente, que choca de frente con el principio de «internet solo para alertas» y por eso requiere su propia decisión; umbrales por defecto calibrados con material de varias casas y validación dejando una casa fuera (§1.11); y aviso de privacidad, contrato y rol de encargado según la LFPDPPP vigente desde marzo de 2025.
 
 ---
 
@@ -1254,7 +1465,7 @@ La misma dependencia de profundidad aplica a `kalman_sigma_accel_sq` (§1.4): la
 
 También habilita reglas de eventos que los píxeles no pueden expresar honestamente: la velocidad real de caminata (útil para separar una visita de entrega de alguien que está deambulando), la distancia real a la puerta, y áreas de zona en metros cuadrados.
 
-**Advertencias.** La homografía solo es válida para el plano sobre el que fue calibrada, así que una entrada vehicular inclinada, escalones, o un patio elevado necesitan cada uno su propia \(H\) o un tratamiento por partes. También debe recalibrarse cada vez que la cámara se mueve o reapunta, lo cual la convierte en una compañera natural de un paquete de configuración por ubicación en lugar de algo integrado en el código.
+**Advertencias.** La homografía solo es válida para el plano sobre el que fue calibrada, así que una entrada vehicular inclinada, escalones, o un patio elevado necesitan cada uno su propia \(H\) o un tratamiento por partes. También debe recalibrarse cada vez que la cámara se mueve o reapunta, lo cual la convierte en una compañera natural de un paquete de configuración por ubicación en lugar de algo integrado en el código. **v11.3:** ese paquete existe desde esta revisión (§1.19), y los puntos de calibración se miden desde el hito 3 (§1.5), así que implementar esta sección ya no requiere volver frente a cada cámara.
 
 **Lectura más profunda:**
 - [OpenCV — `findHomography` and perspective transforms](https://docs.opencv.org/4.x/d9/dab/tutorial_homography.html) — la llamada de calibración y la geometría subyacente
@@ -1350,3 +1561,10 @@ También habilita reglas de eventos que los píxeles no pueden expresar honestam
 - [Raspberry Pi Forums — Pi 5 software decode outperforms Pi 4 hardware decode](https://forums.raspberrypi.com/viewtopic.php?t=391283) — evidencia de que el costo de decodificación de §1.10 no es automáticamente un techo duro
 - [Raspberry Pi Forums — NEON-optimised software H.264 decode on Pi 5](https://forums.raspberrypi.com/viewtopic.php?t=357870) — el mismo punto, con detalle de implementación de por qué es rápido
 - [Frigate GitHub discussion — Pi 5 `hwaccel drm` vs. `v4l2m2m`](https://github.com/blakeblackshear/frigate/discussions/18431) — la bandera de decodificación correcta para la Pi 5, con deltas de CPU medidos en el mundo real
+
+**Añadidas en la revisión v11.3:**
+
+- [The Twelve-Factor App — III. Config](https://12factor.net/config) — separación entre configuración de despliegue y código, base del paquete de sitio (§1.19)
+- [systemd.exec — `EnvironmentFile=`](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#EnvironmentFile=) — carga de `secrets.env` en la unidad de servicio
+- [FFmpeg filters — `setsar` / `setdar`](https://ffmpeg.org/ffmpeg-filters.html#setdar_002c-setsar) — relación de aspecto del píxel y de la imagen, el concepto detrás de la SAR de §0
+- [ultralytics/ultralytics#2129](https://github.com/ultralytics/ultralytics/issues/2129) — postura de Ultralytics: los modelos ajustados a partir de sus pesos siguen bajo AGPL-3.0 (§1.3)
