@@ -1,84 +1,224 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # /usr/local/bin/vva-audit-run
 #
-# Runs the vva-audit agent as the isolated user "opencode-dev".
-# Invoked by .githooks/pre-push through:  sudo -n -H -u opencode-dev /usr/local/bin/vva-audit-run <range>
+# Runs the vva-audit agent as the dedicated user "vva-audit" on a fresh clone made from a
+# git bundle of the trusted repository. Invoked by the pre-push hook through:
+#   git bundle create - <ref> | sudo -n -u vva-audit /usr/local/bin/vva-audit-run <range>
 #
-# Install (root-owned, so neither carlosr nor opencode-dev can modify it):
+# Install (root-owned, so neither carlosr, opencode-dev nor vva-audit can modify it):
 #   sudo install -o root -g root -m 0755 vva-audit-run /usr/local/bin/vva-audit-run
 #
-# Why a wrapper instead of allowing "opencode ..." in sudoers:
-#   sudoers would then let the human user run ANY opencode command as opencode-dev.
-#   This script fixes the repo, the agent, the command and the OpenCode binary,
-#   and accepts only a strictly validated git range as input.
+# One-time root setup (all root-owned 0755 unless noted):
+#   /etc/vva-audit/opencode/{prompts,commands}   from install/vva-audit/opencode/
+#   /etc/vva-audit/xdg/opencode                  empty; OpenCode mkdirs it at startup
+#   /etc/vva-audit/anthropic.env                 root:vva-audit 0640, ANTHROPIC_API_KEY=<value>
+#   /var/lib/vva-audit/work                      vva-audit:vva-audit 0700
 #
-# What the version pin does and does NOT guarantee:
-#   `--version` is what a binary says about itself, so the pin alone proves nothing if
-#   opencode-dev can replace the file. The guarantee comes from WHERE the auditor lives:
-#   a root-owned path that opencode-dev cannot write, checked below on every run
-#   (exit 7). Build agents run as opencode-dev and are NOT sandboxed (AGENTS.md), so
-#   the auditor must not share a writable binary with the code it audits.
+# Trust boundary: everything inside the audited repository is untrusted, including
+# .opencode/, opencode.json, AGENTS.md and prompts/. OpenCode loads project config from
+# the working directory up to the git root, and OPENCODE_CONFIG_DIR only adds on top of
+# it, so the excluded paths are kept out of the checkout instead of being "overridden".
+# The auditor's config, prompt and API key are installed by root under /etc/vva-audit/.
+#
+# Input: the bundle on stdin (no path to validate) and a strictly validated range.
+#
+# Exit codes (one per cause):
+#   2  range is not <40-hex-sha>..<40-hex-sha>
+#   3  API key file missing, unreadable or malformed
+#   4  not running as vva-audit
+#   5  opencode binary not found
+#   6  opencode version differs from the pin
+#   7  opencode binary path not root-owned or group/other-writable
+#   8  /etc/vva-audit config or key file not root-owned or group/other-writable
+#   9  bundle empty or invalid (rejected by git clone)
+#   10 a SHA of the range is not in the bundle
+#   11 an excluded path is present in the checkout
+# Any other non-zero code comes from opencode itself.
 
 set -euo pipefail
 
-REPO="/srv/pi-vision"
+# Pinned version. The binary lives in a root-owned, versioned directory and cannot
+# self-update there. Upgrade = install the reviewed binary under /opt/opencode/<new>/,
+# change this value, reinstall this wrapper. Steps: docs/guia-opencode-ubuntu.md §6.1.
+readonly OPENCODE_VERSION="1.19.5"
+readonly OPENCODE_BIN_PINNED="/opt/opencode/${OPENCODE_VERSION}/opencode"
 
-# Pinned version. The auditor's binary lives in a root-owned, versioned directory,
-# separate from opencode-dev's own ~/.opencode/bin (which self-updates and is used
-# interactively). It cannot self-update there: opencode-dev has no write access.
-# Upgrade = install the reviewed binary under /opt/opencode/<new>/, change this value,
-# reinstall this wrapper. The old directory stays as an instant rollback.
-# Install steps: docs/guia-opencode-ubuntu.md, section 6.1.
-OPENCODE_VERSION="1.19.5"
-OPENCODE_BIN="/opt/opencode/${OPENCODE_VERSION}/opencode"
+readonly AUDIT_USER="vva-audit"
+readonly AUDIT_HOME="/var/lib/vva-audit"
+readonly WORK_ROOT="${AUDIT_HOME}/work"
+readonly ETC_DIR="/etc/vva-audit"
+readonly CONFIG_DIR="${ETC_DIR}/opencode"
+# Empty root-owned dir: OpenCode's "global" config path. AUDIT_HOME is owned by
+# vva-audit, so a root-owned ~/.config/opencode inside it could still be renamed.
+readonly XDG_DIR="${ETC_DIR}/xdg"
+readonly KEY_FILE="${ETC_DIR}/anthropic.env"
+readonly KEY_NAME="ANTHROPIC_API_KEY"
+readonly SAFE_PATH="/usr/local/bin:/usr/bin:/bin"
 
-range="${1:-}"
-if [[ ! "$range" =~ ^[0-9a-f]{40}\.\.[0-9a-f]{40}$ ]]; then
-  echo "vva-audit-run: expected <40-hex-sha>..<40-hex-sha>, got: '${range}'" >&2
-  exit 2
-fi
+# Paths of the audited repo that must never reach OpenCode's config or instruction
+# discovery. CLAUDE.md and .claude/ because OpenCode also reads Claude-compatible
+# instructions and skills; .agents/ as a precaution for skill discovery.
+readonly EXCLUDED_PATHS=(.opencode opencode.json AGENTS.md CLAUDE.md prompts .claude .agents)
 
-if [[ "$(id -un)" != "opencode-dev" ]]; then
-  echo "vva-audit-run: must run as opencode-dev" >&2
-  exit 4
-fi
+# Fixed PATH from the start: nothing below depends on the caller's PATH.
+export PATH="$SAFE_PATH"
 
-if [[ ! -x "$OPENCODE_BIN" ]]; then
-  echo "vva-audit-run: opencode binary not found at ${OPENCODE_BIN}" >&2
-  exit 5
-fi
-
-# Exit 7: the binary, or any directory above it, could be replaced by a non-root user.
-# realpath first, so a symlink cannot point the check at one file and exec at another.
-real_bin="$(realpath -e "$OPENCODE_BIN")"
-p="$real_bin"
-while [[ "$p" != "/" ]]; do
-  read -r owner mode < <(stat -c '%U %a' "$p")
-  if [[ "$owner" != "root" ]] || (( 8#$mode & 8#022 )); then
-    echo "vva-audit-run: ${p} must be root-owned and not group/other-writable (is ${owner} ${mode})" >&2
-    exit 7
+work=""
+cleanup() {
+  if [[ -n "$work" && -d "$work" ]]; then
+    rm -rf -- "$work"
   fi
-  p="$(dirname "$p")"
-done
-OPENCODE_BIN="$real_bin"
+}
+trap cleanup EXIT
 
-installed="$("$OPENCODE_BIN" --version 2>/dev/null | tr -d '[:space:]' || true)"
-if [[ "$installed" != "$OPENCODE_VERSION" ]]; then
-  echo "vva-audit-run: opencode ${installed:-unknown} installed, ${OPENCODE_VERSION} pinned." >&2
-  echo "vva-audit-run: review the upgrade, then update OPENCODE_VERSION in install/vva-audit-run and reinstall." >&2
-  exit 6
-fi
+die() {
+  local code="$1"
+  shift
+  echo "vva-audit-run: $*" >&2
+  exit "$code"
+}
 
-export PATH="${OPENCODE_BIN%/*}:/usr/local/bin:/usr/bin:/bin"
+# Plain git with no system/global config and no hooks: the clone's own .git/config is
+# freshly created by git clone, so nothing from the audited side can configure git.
+safe_git() {
+  # GIT_CEILING_DIRECTORIES: repository discovery never walks above the work root.
+  GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CEILING_DIRECTORIES="$WORK_ROOT" \
+    git -c core.hooksPath=/dev/null "$@"
+}
 
-ENV_FILE="/home/opencode-dev/.config/vva/deepseek.env"
-if [[ ! -r "$ENV_FILE" ]]; then
-  echo "vva-audit-run: missing ${ENV_FILE}" >&2
-  exit 3
-fi
-set -a
-source "$ENV_FILE"
-set +a
+check_range() {
+  if [[ ! "$1" =~ ^[0-9a-f]{40}\.\.[0-9a-f]{40}$ ]]; then
+    die 2 "expected <40-hex-sha>..<40-hex-sha>, got: '$1'"
+  fi
+}
 
-cd "$REPO"
-exec "$OPENCODE_BIN" run --agent vva-audit --command audit "$range"
+check_user() {
+  if [[ "$(id -un)" != "$AUDIT_USER" ]]; then
+    die 4 "must run as ${AUDIT_USER}"
+  fi
+}
+
+# Walks from $2 up to / and fails with exit code $1 if any component is not
+# root-owned or is group/other-writable. realpath first, so a symlink cannot point
+# the check at one file and the later use at another.
+check_root_path() {
+  local code="$1" p owner mode
+  p="$(realpath -e -- "$2")" || die "$code" "cannot resolve $2"
+  while [[ "$p" != "/" ]]; do
+    read -r owner mode < <(stat -c '%U %a' -- "$p")
+    if [[ "$owner" != "root" ]] || (( 8#$mode & 8#022 )); then
+      die "$code" "${p} must be root-owned and not group/other-writable (is ${owner} ${mode})"
+    fi
+    p="$(dirname -- "$p")"
+  done
+}
+
+# Prints the resolved, checked opencode binary path.
+resolve_opencode() {
+  local bin installed
+  [[ -x "$OPENCODE_BIN_PINNED" ]] || die 5 "opencode binary not found at ${OPENCODE_BIN_PINNED}"
+  check_root_path 7 "$OPENCODE_BIN_PINNED"
+  bin="$(realpath -e -- "$OPENCODE_BIN_PINNED")"
+  installed="$("$bin" --version 2>/dev/null | tr -d '[:space:]' || true)"
+  if [[ "$installed" != "$OPENCODE_VERSION" ]]; then
+    echo "vva-audit-run: opencode ${installed:-unknown} installed, ${OPENCODE_VERSION} pinned." >&2
+    die 6 "review the upgrade, then update OPENCODE_VERSION in install/vva-audit-run and reinstall."
+  fi
+  printf '%s\n' "$bin"
+}
+
+check_etc() {
+  check_root_path 8 "$CONFIG_DIR"
+  check_root_path 8 "$XDG_DIR"
+  [[ -r "$KEY_FILE" ]] || die 3 "missing or unreadable ${KEY_FILE}"
+  check_root_path 8 "$KEY_FILE"
+}
+
+# Reads the key line by line, never with `source`: the file is data, not shell.
+# Only KEY_NAME is accepted; the value is never printed.
+read_key() {
+  local line key=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    if [[ "$line" =~ ^${KEY_NAME}=([A-Za-z0-9_-]+)$ && -z "$key" ]]; then
+      key="${BASH_REMATCH[1]}"
+    else
+      die 3 "${KEY_FILE}: unexpected line (only one ${KEY_NAME}=<value> is allowed)"
+    fi
+  done < "$KEY_FILE"
+  [[ -n "$key" ]] || die 3 "${KEY_FILE}: ${KEY_NAME} not set"
+  printf '%s' "$key"
+}
+
+# Copies the bundle from stdin into the work dir. Validity is checked by git clone:
+# `git bundle verify` needs a repository (git 2.43) and the clone does not.
+receive_bundle() {
+  local bundle="$1"
+  cat > "$bundle"
+  [[ -s "$bundle" ]] || die 9 "empty bundle on stdin"
+}
+
+# Clones without checkout, checks both SHAs, then checks out the range's tip with the
+# excluded paths left out by sparse-checkout (so `git status` stays clean).
+clone_checkout() {
+  local bundle="$1" repo="$2" base="$3" tip="$4" sha path
+  safe_git clone -q --no-checkout "$bundle" "$repo" || die 9 "invalid bundle (git clone rejected it)"
+  for sha in "$base" "$tip"; do
+    safe_git -C "$repo" cat-file -e "${sha}^{commit}" 2>/dev/null \
+      || die 10 "commit ${sha:0:8} not in bundle"
+  done
+  local patterns=('/*')
+  for path in "${EXCLUDED_PATHS[@]}"; do
+    patterns+=("!/${path}" "!/${path}/")
+  done
+  safe_git -C "$repo" sparse-checkout set --no-cone "${patterns[@]}"
+  safe_git -C "$repo" checkout -q --detach "$tip"
+  for path in "${EXCLUDED_PATHS[@]}"; do
+    [[ ! -e "${repo}/${path}" && ! -L "${repo}/${path}" ]] \
+      || die 11 "excluded path present in checkout: ${path}"
+  done
+}
+
+# Empties the environment (same effect as env -i) and exports only the allowlist.
+# Not done with `env -i KEY=value cmd`: that would put the key in argv (/proc/<pid>/cmdline).
+reset_env() {
+  local key="$1" var
+  while IFS= read -r var; do
+    unset "$var"
+  done < <(compgen -e)
+  export HOME="$AUDIT_HOME"
+  export PATH="$SAFE_PATH"
+  export TMPDIR="$work"
+  export XDG_CONFIG_HOME="$XDG_DIR"
+  export OPENCODE_CONFIG_DIR="$CONFIG_DIR"
+  # Also named as the config file, so loading it does not depend on whether this OpenCode
+  # version reads opencode.json from OPENCODE_CONFIG_DIR. Loading it twice is idempotent.
+  export OPENCODE_CONFIG="${CONFIG_DIR}/opencode.json"
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL=/dev/null
+  export LANG=C.UTF-8
+  export "${KEY_NAME}=${key}"
+}
+
+main() {
+  local range="${1:-}" bin key
+  check_range "$range"
+  check_user
+  bin="$(resolve_opencode)"
+  check_etc
+  key="$(read_key)"
+
+  umask 077
+  work="$(mktemp -d "${WORK_ROOT}/run.XXXXXX")"
+  # Leave the caller's cwd (e.g. carlosr's 750 repo): git must never look at it.
+  cd "$work"
+  receive_bundle "${work}/in.bundle"
+  clone_checkout "${work}/in.bundle" "${work}/repo" "${range%%..*}" "${range##*..}"
+
+  cd "${work}/repo"
+  reset_env "$key"
+  # Not exec: the EXIT trap must remove the work dir after opencode finishes.
+  "$bin" run --agent vva-audit --command audit "$range" < /dev/null
+}
+
+main "$@"

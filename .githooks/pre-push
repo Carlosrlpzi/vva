@@ -1,12 +1,15 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # pre-push hook: runs the vva-audit agent on the commits about to be pushed.
 #
+# Reference copy. The active hook lives OUTSIDE the working tree, so a change here never
+# runs until carlosr reviews and installs it:
+#   install -m 0700 .githooks/pre-push ~/.config/vva/hooks/pre-push
+#   git config core.hooksPath ~/.config/vva/hooks
+#
 # - Blocks the push only when the auditor returns VERDICT: REQUEST_CHANGES.
-# - Saves every report under .vva/audits/ (add .vva/ to .gitignore).
+# - Saves every report under .vva/audits/ (git-ignored).
 # - Bypass deliberately with: git push --no-verify
 # - Skip without bypassing other hooks: VVA_AUDIT=0 git push
-#
-# Enable once per clone:  git config core.hooksPath .githooks
 
 set -euo pipefail
 
@@ -15,11 +18,11 @@ if [[ "${VVA_AUDIT:-1}" == "0" ]]; then
   exit 0
 fi
 
-# OpenCode runs as the isolated user "opencode-dev" (it owns the credentials in its own
-# ~/.local/share/opencode/auth.json). The hook runs as the human user, so it delegates
-# through a root-owned wrapper allowed by a narrow sudoers rule.
+# The auditor runs as the dedicated user "vva-audit" through a root-owned wrapper allowed
+# by a narrow sudoers rule. It receives the pushed history as a git bundle on stdin and
+# audits a fresh clone of it, never this working tree.
 # -n: never prompt for a password; if sudo is not configured, fail (and block the push).
-AUDIT_CMD=(sudo -n -H -u opencode-dev /usr/local/bin/vva-audit-run)
+AUDIT_CMD=(sudo -n -u vva-audit /usr/local/bin/vva-audit-run)
 ZERO_SHA="0000000000000000000000000000000000000000"
 REPORT_DIR=".vva/audits"
 mkdir -p "$REPORT_DIR"
@@ -30,6 +33,15 @@ status=0
 while read -r local_ref local_sha remote_ref remote_sha; do
   # Deleting a remote branch: nothing to audit.
   [[ "$local_sha" == "$ZERO_SHA" ]] && continue
+
+  # git bundle needs a ref. Pushing a bare SHA, or a ref that moved since git computed
+  # local_sha, cannot be bundled faithfully: fail closed.
+  if [[ "$local_ref" != refs/* ]] \
+     || [[ "$(git rev-parse --verify --quiet "${local_ref}^{commit}" || true)" != "$local_sha" ]]; then
+    echo "[vva-audit] ${local_ref} is not a ref pointing at ${local_sha:0:8}. Push blocked." >&2
+    status=1
+    continue
+  fi
 
   if [[ "$remote_sha" == "$ZERO_SHA" ]]; then
     # New branch on the remote: audit commits not reachable from origin's default branch.
@@ -63,11 +75,11 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   report="${REPORT_DIR}/$(date +%Y%m%d-%H%M%S)-${local_sha:0:8}.md"
   echo "[vva-audit] auditing ${range} -> ${report}" >&2
 
-  # Non-interactive run: permission requests marked "ask" (pytest) are rejected,
-  # so the hook audits statically. Explicit deny rules always remain enforced.
+  # Non-interactive, static audit: the auditor's config denies running tests.
   # Ranges are passed as full SHAs so the wrapper can validate them strictly.
-  if ! "${AUDIT_CMD[@]}" "$range" < /dev/null > "$report"; then
-    echo "[vva-audit] opencode failed; see ${report}. Push blocked." >&2
+  # pipefail: a failed bundle or a failed audit both block the push.
+  if ! git bundle create -q - "$local_ref" | "${AUDIT_CMD[@]}" "$range" > "$report"; then
+    echo "[vva-audit] audit failed; see ${report} and the messages above. Push blocked." >&2
     status=1
     continue
   fi
