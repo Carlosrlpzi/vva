@@ -27,6 +27,18 @@ Module contracts: `docs/module-contracts.md`.
 6. Do not invent fields, defaults, thresholds, exit codes, file paths or model ids.
    Copy them from code or docs. If a fact is missing, say so and ask ONE question.
 
+## Language
+- Always reply to the user in Spanish, whatever language the request is written in.
+  This covers chat answers, plans, reports, reviews, questions and summaries.
+- Keep in English: code, identifiers, code comments and docstrings, commit messages,
+  and config files (see Code standards).
+- Files under `docs/` keep the language of the file: `*.es.md` in Spanish, the rest
+  in English.
+- Never translate technical terms (commit, push, hook, patch, bundle, pipeline,
+  tracker, ...), file paths, commands, env var names or quoted code.
+- Paste tool output verbatim, never translated (invariant 2).
+- Machine-parsed lines stay exactly as specified, e.g. `VERDICT: APPROVE`.
+
 ## Code standards (Python >= 3.11)
 - Docstring on every public module/class/function stating its contract; comments say WHY.
 - `ruff check`, `ruff format --check`, `mypy --strict src` and `pytest -q` must pass.
