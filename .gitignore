@@ -5,9 +5,12 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 *.egg-info/
-# Secrets: any *.env (.env, secrets.env, notify.env, ...). Templates end in .env.example and ARE committed.
+# Secrets: *.env, .env.*, .envrc. Templates (when added) are named
+# *.env.example or .env.example and are committed.
 *.env
-!*.env.example
+.env.*
+!.env.example
+.envrc
 node_modules/
 .ruff_cache/
 .mypy_cache/

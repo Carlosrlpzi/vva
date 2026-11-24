@@ -153,7 +153,7 @@ Verification: Imager reports "Write Successful". Eject the card safely.
    Or scan the subnet directly (adjust the range to match your network):
    ```bash
    sudo apt install nmap
-   nmap -sn 192.168.1.0/24
+   nmap -sn <PI_SUBNET>/24
    ```
    As a last resort, check your modem/router's DHCP client list for the Pi's IP and SSH to that address directly. ([Avahi on Ubuntu](https://oneuptime.com/blog/post/2026-01-15-configure-mdns-avahi-ubuntu/view))
 3. Update the OS and firmware (do this before anything else):
@@ -197,11 +197,11 @@ If you'd rather keep the router on the dedicated uplink port for clarity, just s
 
 1. **Give the Pi a static/reserved IP** so it never changes (critical once you start opening RTSP connections by IP). Easiest approach: reserve the Pi's MAC address a fixed IP in your router's DHCP settings. Alternatively, set it directly on the Pi with NetworkManager:
    ```bash
-   sudo nmcli connection modify "Wired connection 1" ipv4.addresses 192.168.1.50/24 ipv4.gateway 192.168.1.1 ipv4.dns "192.168.1.1" ipv4.method manual
+   sudo nmcli connection modify "Wired connection 1" ipv4.addresses <PI_IP>/24 ipv4.gateway <GATEWAY_IP> ipv4.dns "<DNS_IP>" ipv4.method manual
    sudo nmcli connection up "Wired connection 1"
    ```
 2. **Log into the Ruijie switch's cloud/local management UI** and confirm the Pi's uplink port and each camera's PoE port show link-up and the expected power draw.
-3. **Assign static IPs to each camera** (via the camera's own web UI or ONVIF device tool) on the same subnet, e.g. `192.168.1.101`, `.102`, `.103` — do this now so your Python code never has to re-discover cameras via DHCP.
+3. **Assign static IPs to each camera** (via the camera's own web UI or ONVIF device tool) on the same subnet, e.g. `<CAMERA_IP_1>`, `<CAMERA_IP_2>`, `<CAMERA_IP_3>` — do this now so your Python code never has to re-discover cameras via DHCP.
 4. **Connect VS Code to the Pi** (do this once and you'll code from your normal desktop for the rest of the project):
    - VS Code → Extensions → install "Remote - SSH" (Microsoft)
    - `Ctrl+Shift+P` → "Remote-SSH: Connect to Host…" → `<username>@camerapi.local` (or the static IP)
@@ -209,7 +209,7 @@ If you'd rather keep the router on the dedicated uplink port for clarity, just s
 
 Verification:
 ```bash
-ping -c3 192.168.1.101       # each camera responds
+ping -c3 <CAMERA_IP>       # each camera responds
 ip addr show                 # Pi shows the static IP you assigned
 ```
 
@@ -256,7 +256,7 @@ sudo apt install -y ffmpeg libgstreamer1.0-0 gstreamer1.0-plugins-base \
 
 Quick sanity check that a camera's RTSP stream is reachable at all, before writing any Python:
 ```bash
-ffprobe rtsp://<user>:<password>@192.168.1.101:554/Streaming/Channels/101
+ffprobe "$VVA_CAM_FRONT_SUB_URL"
 ```
 If this returns stream info (codec, resolution, fps), the network + camera side is confirmed working end‑to‑end — any later Python issues are code‑side, not network‑side.
 
@@ -285,8 +285,14 @@ pip install opencv-python-headless numpy onvif-zeep fastapi uvicorn[standard] \
 
 - `onvif-zeep` — discover/query cameras and fetch RTSP stream URIs over ONVIF ([github.com/FalkTannhaeuser](https://github.com/FalkTannhaeuser/python-onvif-zeep)):
   ```python
+  import os
   from onvif import ONVIFCamera
-  cam = ONVIFCamera('192.168.1.101', 80, 'admin', 'yourpassword')
+  cam = ONVIFCamera(
+      os.environ["VVA_CAM_FRONT_ONVIF_HOST"],
+      80,
+      os.environ["VVA_CAM_FRONT_ONVIF_USER"],
+      os.environ["VVA_CAM_FRONT_ONVIF_PASSWORD"],
+  )
   media = cam.create_media_service()
   profiles = media.GetProfiles()
   uri = media.GetStreamUri({
@@ -351,7 +357,7 @@ At this point everything is installed and verified — hardware, OS, network, AI
 | OS Flash | Imager fails to write / verify | Bad SD card, USB reader issue | Try a different USB port/reader, re-download the OS image cache in Imager, use a different microSD |
 | OS Flash | No "OS Customisation" step, or headless settings ignored on first boot | Ubuntu's repo Imager (1.8.5) is too old for cloud-init customisation | Uninstall it and install the official 2.x `.deb` from `downloads.raspberrypi.com`; verify with `rpi-imager --version` ([Raspberry Pi Forums](https://forums.raspberrypi.com/viewtopic.php?t=397018)) |
 | OS Flash | AppImage won't launch on Ubuntu 24 | Missing FUSE 2 / needs root | `sudo apt install libfuse2`, then run it with `sudo ./imager_latest_amd64.AppImage` ([raspberrytips](https://raspberrytips.com/install-raspberry-pi-imager-ubuntu/)) |
-| First Boot | Can't SSH via `camerapi.local` from Ubuntu | `libnss-mdns` missing or Avahi not running | `sudo apt install libnss-mdns avahi-utils`, confirm `systemctl status avahi-daemon`, test with `avahi-resolve -n camerapi.local`; fall back to `nmap -sn 192.168.1.0/24` or the router's DHCP table ([Avahi on Ubuntu](https://oneuptime.com/blog/post/2026-01-15-configure-mdns-avahi-ubuntu/view)) |
+| First Boot | Can't SSH via `camerapi.local` from Ubuntu | `libnss-mdns` missing or Avahi not running | `sudo apt install libnss-mdns avahi-utils`, confirm `systemctl status avahi-daemon`, test with `avahi-resolve -n camerapi.local`; fall back to `nmap -sn <PI_SUBNET>/24` or the router's DHCP table ([Avahi on Ubuntu](https://oneuptime.com/blog/post/2026-01-15-configure-mdns-avahi-ubuntu/view)) |
 | First Boot | `ssh` rejects the key you set in Imager | Pasted the private key, or wrong key file | Paste the contents of `~/.ssh/id_ed25519.pub` (the `.pub` file); test with `ssh -i ~/.ssh/id_ed25519 -v <user>@camerapi.local` to see which key is offered |
 | First Boot | SSH "Permission denied" | Wrong username or SSH not enabled at flash time | Re-check the username set in Imager's customisation step; if SSH wasn't enabled, re-flash or add an empty `ssh` file to the boot partition manually |
 | Hailo Install | `lspci \| grep hailo` shows nothing | PCIe not enabled, cable issue, or old firmware | Confirm `dtparam=pciex1_gen=3` is in `/boot/firmware/config.txt`, reseat the ribbon cable, run `sudo rpi-eeprom-update -a` then reboot ([spotpear.com](https://spotpear.com/index.php/wiki/Raspberry-Pi-5-AI-HAT-Plus-Hailo-8L-13-26-Tops-PCIe-M.2.html)) |
@@ -371,7 +377,7 @@ At this point everything is installed and verified — hardware, OS, network, AI
 - [ ] `lspci | grep -i hailo` shows the Hailo co-processor
 - [ ] `hailortcli scan` and `hailortcli fw-control identify` both succeed
 - [ ] Pi has a fixed IP and is reachable over SSH and in VS Code Remote‑SSH
-- [ ] Each camera has a fixed IP and responds to `ffprobe rtsp://...`
+- [ ] Each camera has a fixed IP and responds to `ffprobe "$VVA_CAM_FRONT_SUB_URL"`
 - [ ] Python venv activates cleanly and `import cv2, onvif, hailo_platform` succeeds
 - [ ] Git repo initialized with the module scaffold committed
 
@@ -389,10 +395,10 @@ MvmbZ58jpBvv1bFn3j08ypwcuPT7BolmMpRWHpz3qwg=
 
 [Interface]
 PrivateKey = <contenido de laptop_private.key>
-Address = 10.13.13.2/24
+Address = <PI_IP>/24
 
 [Peer]
 PublicKey = prE8LPUuDmBZ5I6X8LxXyoVBSyv9/rAPVJyfiL2eaQA=
 Endpoint = <tu-ip-publica-o-dominio-DDNS>:51820
-AllowedIPs = 192.168.1.0/24, 10.13.13.0/24
+AllowedIPs = <HOME_SUBNET>/24, <PI_SUBNET>/24
 PersistentKeepalive = 25

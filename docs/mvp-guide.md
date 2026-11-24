@@ -155,6 +155,12 @@ Fixes from the `vva-audit` review of v11.3. No new feature: each item closes a g
 9. **SAR must match the stream resolutions (§0, §1.18).** `sample_aspect_ratio` is checked against `(sub_h/main_h) / (sub_w/main_w)` within 0.01; 720×576 / 2560×1440 at 1.42 passes (1.4222), drift fails loudly.
 10. **Override values must match their default's type (§1.18).** Int is accepted for a float default; bool is rejected for a numeric default; the error names the key and both types.
 11. **ONVIF credentials are discovery-only, not startup secrets (§1.1, §1.18).** The pipeline reads the stream URLs; host/user/password are needed only by the setup step that prints them.
+12. **Every `*.env` file is excluded from `site_hash` (§1.11, §1.19).** The old wording excluded only `secrets.env`, but `notify.env` holds `VVA_NOTIFY_WEBHOOK_URL`: rotating it must not change the hash, and a hash computed from a secret must not be published in harness reports.
+13. **The alert webhook no longer travels in argv (§1.13).** `camera-alert@.service` runs `install/camera-alert %i`; the script reads `VVA_NOTIFY_WEBHOOK_URL` from the environment and pipes it to `curl -K -` on stdin, because `/proc/<pid>/cmdline` is readable by any local user while a root process's environment is not. `--max-time 10` keeps a down network from hanging the oneshot, and a quote or newline in the URL is rejected before curl sees it.
+14. **`render-units.sh` checks the whole path (§1.13).** It walks `site_dir` and every parent up to `/` with the same owner/mode loop as `install/vva-audit-run`, because a writable directory in that path lets another user swap the `.env` files, `site.yaml` or the zones.
+15. **The secrets ignore list covers `.env.*` and `.envrc` (§1.19).** `*.env` alone left `.env.local` and `.envrc` unignored; `!.env.example` keeps templates committable.
+16. **Units, scripts and the example bundle are marked as specified, not shipped (§1.13, §1.19).** The units and scripts are implemented at milestone 11; `configs/site.example/` has no milestone in the §3 table yet, which stays an open question rather than an invented date.
+17. **The setup guide names cameras by env var (§1.1).** The `ffprobe` and `ONVIFCamera` examples read `VVA_CAM_FRONT_*`, and the network examples use placeholders, so no literal credential or address remains in the document.
 
 ---
 
@@ -894,7 +900,7 @@ eval:
   emit_per_stage_traces: true              # v4: detection / confirmed-track / event-level, not just final matches
   config_hash: null                        # v6: populated at run time — SHA-256 over every loaded config file, reported alongside n_labeled_events
   defaults_hash: null                      # v11.3: SHA-256 over configs/*.yaml only — changes with code releases
-  site_hash: null                          # v11.3: SHA-256 over the site bundle minus secrets.env — changes with the installation
+  site_hash: null                          # v11.3, v11.4: SHA-256 over the site bundle excluding every *.env file — changes with the installation
 
   metrics: [precision, recall, f1, mean_latency_to_event_ms]
   detector_metrics: [per_frame_recall, per_frame_precision]   # v7: per-frame, detector-stage only — isolates a domain gap from a threshold problem
@@ -989,7 +995,7 @@ pre_roll:
 - **Out-of-process failure notification (v11).** `Restart=`/`WatchdogSec=` above *recover* from a crash or hang; nothing *reports* it, because the only notification consumer (§1.14, v9) lives inside the process that just died — and once `StartLimitBurst` is exhausted the unit sits in `failed` indefinitely with nobody told. Add `OnFailure=camera-alert@%n.service` to the pipeline unit: systemd activates that oneshot unit each time the pipeline enters the `failed` state (a crash, a watchdog-detected hang, and the final restart-limit exhaustion all pass through `failed` under the default `RestartMode=normal`), and the oneshot delivers a webhook from outside the failed process. This covers "the process is not running"; it does **not** cover power loss, network loss, or a wedged kernel, since systemd itself is gone in those cases — see the dead-man's switch in §1.14, which covers exactly that disjoint set.
 
   ```ini
-  # install/systemd/camera-pipeline.service.in — fragment (v11, v11.4); rendered into /etc/systemd/system/ by install/render-units.sh
+  # install/systemd/camera-pipeline.service.in — fragment (v11, v11.4); rendered into /etc/systemd/system/ by install/render-units.sh; specified by this guide, implemented at milestone 11
   [Unit]
   OnFailure=camera-alert@%n.service
 
@@ -999,7 +1005,7 @@ pre_roll:
   EnvironmentFile=@VVA_SITE_DIR@/secrets.env
   EnvironmentFile=@VVA_SITE_DIR@/notify.env
 
-  # install/systemd/camera-alert@.service.in (v11, v11.4) — runs outside the failed process
+  # install/systemd/camera-alert@.service.in (v11, v11.4) — runs outside the failed process; specified by this guide, implemented at milestone 11
   [Unit]
   Description=Out-of-process failure alert for %i
 
@@ -1010,19 +1016,44 @@ pre_roll:
   # anything after `EnvironmentFile=<path>` on the same line becomes part of the path
   # value, so the line below must carry no comment of its own.
   EnvironmentFile=@VVA_SITE_DIR@/notify.env
-  ExecStart=/usr/bin/curl -fsS -d "%i entered failed state on %H" "${VVA_NOTIFY_WEBHOOK_URL}"
+  ExecStart=/usr/local/libexec/vva/camera-alert %i
   ```
-
-- **v11.4 correction — the units are rendered from the site, not written by hand.** v11.3 hard-coded `/etc/vva/site/secrets.env` in the alert unit, but §1.19 lets `VVA_SITE_DIR` point elsewhere: with a non-default bundle the alert unit started without the webhook URL, and the crash alert was lost exactly when it was needed. systemd cannot read `VVA_SITE_DIR` to resolve an `EnvironmentFile=` path, so the path has to be fixed when the unit file is written — and a person editing several units by hand is precisely the error to remove. The repository keeps templates (`install/systemd/*.service.in`); installation renders them from the one site directory, which also becomes the application's `VVA_SITE_DIR`. The same correction applies least privilege: the alert unit reads `notify.env`, which holds only `VVA_NOTIFY_WEBHOOK_URL`, so a process that sends one HTTP request never holds camera credentials or `VVA_API_TOKEN`. The webhook URL lives **only** in `notify.env` (the pipeline loads both files), so it is never duplicated in two files that could drift.
 
   ```bash
   #!/usr/bin/env bash
-  # install/render-units.sh (v11.4) — run as root at install time:  sudo install/render-units.sh /etc/vva/site
+  # install/camera-alert (v11.4) — specified by this guide; installed by install/render-units.sh at milestone 11
+  set -euo pipefail
+  [[ -n "${VVA_NOTIFY_WEBHOOK_URL:-}" ]] || { echo "VVA_NOTIFY_WEBHOOK_URL is empty" >&2; exit 1; }
+  [[ "$VVA_NOTIFY_WEBHOOK_URL" != *'"'* && "$VVA_NOTIFY_WEBHOOK_URL" != *$'\n'* ]] \
+    || { echo "VVA_NOTIFY_WEBHOOK_URL contains a double quote or newline" >&2; exit 1; }
+  printf 'url = "%s"\n' "$VVA_NOTIFY_WEBHOOK_URL" \
+    | curl -fsS --max-time 10 -K - -d "$1 entered failed state on $(hostname)"
+  ```
+
+- **v11.4 correction — the units are rendered from the site, not written by hand.** v11.3 hard-coded `/etc/vva/site/secrets.env` in the alert unit, but §1.19 lets `VVA_SITE_DIR` point elsewhere: with a non-default bundle the alert unit started without the webhook URL, and the crash alert was lost exactly when it was needed. systemd cannot read `VVA_SITE_DIR` to resolve an `EnvironmentFile=` path, so the path has to be fixed when the unit file is written — and a person editing several units by hand is precisely the error to remove. The repository is specified to keep templates (`install/systemd/*.service.in`); installation renders them from the one site directory, which also becomes the application's `VVA_SITE_DIR`. The same correction applies least privilege: the alert unit reads `notify.env`, which holds only `VVA_NOTIFY_WEBHOOK_URL`, so a process that sends one HTTP request never holds camera credentials or `VVA_API_TOKEN`. The webhook URL lives **only** in `notify.env` (the pipeline loads both files), so it is never duplicated in two files that could drift. The templates and scripts named here are specified by this guide and implemented at milestone 11 (§3). The alert unit no longer puts the webhook URL in `ExecStart`: process arguments are readable by any local user in `/proc/<pid>/cmdline`, while the environment of a root process is not. It runs `install/camera-alert`, which reads `VVA_NOTIFY_WEBHOOK_URL` from the environment and passes it to `curl -K -` on stdin; `--max-time 10` keeps a down network from hanging the oneshot. `render-units.sh` also walks `site_dir` and every parent up to `/` with the same owner/mode loop as `install/vva-audit-run`, because a writable directory in that path lets another user swap the `.env` files, `site.yaml` or the zones.
+
+  ```bash
+  #!/usr/bin/env bash
+  # install/render-units.sh (v11.4) — specified by this guide; implemented at milestone 11.
+  # Run as root at install time:  sudo install/render-units.sh /etc/vva/site
   set -euo pipefail
   repo_dir="$(dirname "$(realpath "$0")")"
   site_dir="$(realpath -e "${1:?usage: render-units.sh <VVA_SITE_DIR>}")"
   # The path is substituted into unit files: refuse characters systemd or sed would reinterpret.
   [[ "$site_dir" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "unsupported characters in ${site_dir}" >&2; exit 1; }
+  # Walk site_dir and every parent up to / (same loop as install/vva-audit-run): a writable
+  # directory in this path lets another user swap the .env files, site.yaml or the zones.
+  p="$site_dir"
+  while [[ "$p" != "/" ]]; do
+    read -r owner mode < <(stat -c '%U %a' "$p")
+    if [[ "$owner" != "root" ]] || (( 8#$mode & 8#022 )); then
+      echo "${p} must be root-owned and not group/other-writable (is ${owner} ${mode})" >&2
+      exit 1
+    fi
+    p="$(dirname "$p")"
+  done
+  install -d -o root -g root -m 0755 /usr/local/libexec/vva
+  install -o root -g root -m 0755 "${repo_dir}/camera-alert" /usr/local/libexec/vva/camera-alert
   for f in secrets.env notify.env; do
     [[ "$(stat -c '%U %a' "${site_dir}/${f}" 2>/dev/null)" == "root 600" ]] \
       || { echo "${site_dir}/${f} must exist, be root-owned and mode 0600" >&2; exit 1; }
@@ -1439,7 +1470,7 @@ log.info("site %s overrides %s", site["site_id"], overridden)
 
 ```text
 configs/                        # repo: defaults shared by every installation (versioned)
-configs/site.example/           # repo: synthetic template of a bundle, no real data
+configs/site.example/           # repo: synthetic template of a bundle, no real data (specified; not yet created)
 $VVA_SITE_DIR/                  # per installation, outside the repo (default /etc/vva/site/)
   site.yaml                     # site_id, timezone, cameras, storage paths, overrides
   cameras/<camera_id>.yaml      # camera profile + pixel budget (§0)
@@ -1467,9 +1498,9 @@ Three design rules, each with its reason:
 
 1. **Only two layers, in a fixed order:** defaults, then `site.overrides`. Dictionaries merge; scalars and lists are replaced. There is no third layer of environment variables for configuration values: every extra layer is one more place a value can come from, which is exactly the drift §1.18 exists to catch. Environment variables are reserved for secrets.
 2. **An override cannot create keys, and can only touch keys declared `site_overridable` (v11.4).** If the key does not exist in the defaults, startup fails (§1.18). Without this rule, `max_centroid_distnce_px` in `site.yaml` is silently ignored and the house runs on the default while believing it changed it. If the key exists but its defaults block does not list it in `site_overridable`, startup fails too: the house may change what depends on the house, not the algorithm.
-3. **Three hashes instead of one.** `config_hash` (§1.11, v6) identifies the merged configuration; `defaults_hash` and `site_hash` say which of the two layers changed. `secrets.env` is left out of the hashes and never logged: rotating a password must not look like a behavior change.
+3. **Three hashes instead of one.** `config_hash` (§1.11, v6) identifies the merged configuration; `defaults_hash` and `site_hash` say which of the two layers changed. Every `*.env` file in the bundle (the pattern `.gitignore` uses) is left out of the hashes and never logged: rotating `notify.env`'s `VVA_NOTIFY_WEBHOOK_URL` must not change `site_hash`, and a hash computed from a secret must not be published in harness reports.
 
-For development and CI, `configs/site.example/` is a complete bundle with synthetic values (camera `front`, paths under `/tmp`, no real secrets). Tests thus exercise the same two-layer loading that runs on the Pi, with no data from any house in the repository. On the Pi, the units rendered by `install/render-units.sh` (§1.13, v11.4) load `secrets.env` and `notify.env` with `EnvironmentFile=` and always set `VVA_SITE_DIR`, all from the same value. The template ships `secrets.env.example` and `notify.env.example`: every `*.env` is git-ignored, so a real secrets file copied into the repository cannot be committed by accident.
+For development and CI, `configs/site.example/` is specified by this guide as a complete bundle with synthetic values (camera `front`, paths under `/tmp`, no real secrets); the §3 table does not yet name the milestone that creates it. Tests will then exercise the same two-layer loading that runs on the Pi, with no data from any house in the repository. On the Pi, the units rendered at milestone 11 by `install/render-units.sh` (§1.13, v11.4) load `secrets.env` and `notify.env` with `EnvironmentFile=` and always set `VVA_SITE_DIR`, all from the same value. The template is specified to ship `secrets.env.example` and `notify.env.example`: every `*.env` is git-ignored, so a real secrets file copied into the repository cannot be committed by accident.
 
 **What it does not do yet.** It does not install, update or monitor houses remotely. The site bundle is the precondition for those pieces to exist without touching the code, but designing them before there is a second house would be guessing (see the end of §3).
 
@@ -1595,7 +1626,7 @@ Proposed pacing assumes part‑time, incremental work (evenings/weekends), start
 - [ ] Startup rejects unknown site keys, absolute paths in the defaults and unfilled `<...>` placeholders, and logs the keys the site overrides (§1.18)
 - [ ] The harness reports `site_id`, `defaults_hash` and `site_hash`, and states "cross-site generalization: not measured" while there is a single site (§1.11)
 - [ ] Substream SAR recorded and `aspect_correction` decided by measurement (§0, §1.3)
-- [ ] `configs/site.example/` exists and is the bundle used by tests and CI
+- [ ] `configs/site.example/` exists and is the bundle used by tests and CI (specified by the guide; the §3 table names no milestone yet)
 
 Once this checklist is fully green for one camera, the next phase is generalizing to multiple cameras with bounded per-camera worker isolation, health checks, and backpressure handling.
 
