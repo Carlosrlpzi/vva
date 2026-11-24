@@ -146,9 +146,15 @@ Fixes from the `vva-audit` review of v11.3. No new feature: each item closes a g
 
 1. **Rule 2 no longer rejects `/metrics` (§1.18).** It treated any default starting with "/" as a filesystem path, so the published `observability.metrics_endpoint: /metrics` made every startup fail. It now tests `Path(v).is_absolute()` per key and exempts declared URL routes by key (`NON_FS_KEYS`), so a new absolute path still fails closed.
 2. **Site overrides are an explicit whitelist (§1.4, §1.18, §1.19).** v11.3 accepted any existing key, contradicting the §1.4 note (only the two pixel-space keys) and `AGENTS.md` invariant 4. `tracker.yaml` now declares `site_overridable`; any other override fails. `validate_config()` is stated to run on the merged configuration.
-3. **Every secret is checked at startup (§1.18).** ONVIF credentials, the enabled notification channels, the dead-man's switch and `VVA_API_TOKEN`, not only the stream URLs. All missing names are reported at once, never their values.
+3. **Every secret the enabled configuration reads is checked at startup (§1.18).** The per-camera stream URLs, the enabled notification channels, the dead-man's switch and `VVA_API_TOKEN`. All missing names are reported at once, never their values.
 4. **`aspect_correction` is validated against its enum (§0, §1.18).** `undecided` used to pass.
 5. **Units rendered from the site, and a separate `notify.env` (§1.13, §1.19).** The alert unit hard-coded the default site path and loaded every secret to read one URL. `*.env` is now git-ignored, with `*.env.example` templates committed.
+6. **Camera ids are validated and unique (§1.18).** The `SITE_ID` alphabet plus hyphen; `front-door`/`front_door` would share `VVA_CAM_FRONT_DOOR_*`, and `../x` would escape the bundle path.
+7. **The zones directory comes from `events.zone_rules.zone_definitions` (§1.5, §1.18).** `_check_cameras()` no longer hard-codes `zones/`, so startup checks the path `validate_config()` will read.
+8. **A malformed camera profile raises `ConfigError` (§1.18).** Invalid YAML, an empty file, a non-mapping or a missing `camera` mapping names the file instead of leaking `yaml.YAMLError`/`TypeError`/`KeyError`.
+9. **SAR must match the stream resolutions (§0, §1.18).** `sample_aspect_ratio` is checked against `(sub_h/main_h) / (sub_w/main_w)` within 0.01; 720×576 / 2560×1440 at 1.42 passes (1.4222), drift fails loudly.
+10. **Override values must match their default's type (§1.18).** Int is accepted for a float default; bool is rejected for a numeric default; the error names the key and both types.
+11. **ONVIF credentials are discovery-only, not startup secrets (§1.1, §1.18).** The pipeline reads the stream URLs; host/user/password are needed only by the setup step that prints them.
 
 ---
 
@@ -258,7 +264,9 @@ uri = media.GetStreamUri({
 
 **v10 correction — don't hardcode camera credentials in source.** The example above previously wrote the ONVIF username and password directly in the code. Read them from environment variables (or an equivalent secrets mechanism) instead, since this file is the kind of thing that ends up committed, pasted into a writeup, or shared for debugging — and the failure mode is a leaked camera credential, not just a leaked API key.
 
-**v11.3 correction — one naming scheme per camera.** The v10 correction took the credentials out of the code, but with single names (`CAMERA_HOST`, `CAMERA_USER`, `CAMERA_PASSWORD`) that only allow one camera and contradict the scheme `AGENTS.md` and `README.md` already use. The example above uses `VVA_CAM_<ID>_ONVIF_HOST`/`_USER`/`_PASSWORD` and `VVA_CAM_<ID>_SUB_URL`/`_MAIN_URL`, where `<ID>` is the site's `camera_id` upper-cased. The values live in the site bundle's `secrets.env` (§1.19), which systemd loads with `EnvironmentFile=`, and §1.18 fails at startup if any is missing.
+**v11.3 correction — one naming scheme per camera.** The v10 correction took the credentials out of the code, but with single names (`CAMERA_HOST`, `CAMERA_USER`, `CAMERA_PASSWORD`) that only allow one camera and contradict the scheme `AGENTS.md` and `README.md` already use. The example above uses `VVA_CAM_<ID>_ONVIF_HOST`/`_USER`/`_PASSWORD` and `VVA_CAM_<ID>_SUB_URL`/`_MAIN_URL`, where `<ID>` is the site's `camera_id` upper-cased. The values live in the site bundle's `secrets.env` (§1.19), which systemd loads with `EnvironmentFile=`, and §1.18 fails at startup if a required secret is missing.
+
+**v11.4 correction — ONVIF credentials are discovery-only.** The pipeline reads the stream URIs from `VVA_CAM_<ID>_SUB_URL`/`_MAIN_URL`; the ONVIF host, user and password above are needed only by this setup step, which prints those URIs, so §1.18 does not require them at startup.
 
 **Correction (v2) — don't let `VideoCapture` silently go stale.** `cv2.VideoCapture` buffers frames internally (via FFmpeg/GStreamer), and if your processing loop ever falls behind the camera's real frame rate, it does not drop frames — it serves increasingly old ones while `.read()` keeps returning successfully. Nothing errors, so the system *looks* healthy while end-to-end alert latency silently grows unbounded. Fix this with a dedicated ingestion thread that continuously reads frames into a single‑slot "mailbox" (each new frame overwrites the previous one), so the processing loop always consumes the freshest available frame and stale ones are discarded rather than queued. Where the backend honors it, `cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)` helps too, but it's not reliably supported across all FFmpeg builds, so treat the threaded mailbox pattern as the dependable fix. Attach a **capture timestamp** to each frame the instant it's read (not when it's later processed) — every downstream event should carry this capture time, since a lagging pipeline would otherwise misrepresent when something actually happened, which destroys forensic value. See §1.10 for the full latency‑budget and timestamp discipline this feeds into.
 
@@ -1213,6 +1221,7 @@ from pathlib import Path
 import yaml
 
 SITE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
+CAMERA_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")   # v11.4: names a file and an env var prefix
 PLACEHOLDER = re.compile(r"<[^>]+>")
 ASPECT_CORRECTION = {"none", "square_pixels"}   # v11.4: the §1.3 enum, enforced at startup
 # Keys whose values start with "/" but are URL routes, not filesystem paths.
@@ -1238,10 +1247,23 @@ def _items(d, prefix=""):   # (leaf path, scalar); list elements share the list'
         else:
             yield path, v
 
+def _leaf(d: dict, dotted: str):
+    for part in dotted.split("."):
+        d = d[part]
+    return d
+
 def _overridable(defaults: dict) -> set[str]:
     """v11.4: keys a site may override, declared by each defaults block next to the parameters it governs."""
     return {f"{section}.{key}" for section, block in defaults.items() if isinstance(block, dict)
             for key in block.get("site_overridable", [])}
+
+def _same_type(default, value) -> bool:
+    # bool subclasses int, so the bool default and the bool value must be settled first.
+    if isinstance(default, bool):
+        return isinstance(value, bool)
+    if isinstance(default, float):
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return type(value) is type(default)
 
 def _check_overrides(defaults: dict, site: dict) -> list[str]:
     requested = set(_keys(site.get("overrides", {})))
@@ -1253,6 +1275,13 @@ def _check_overrides(defaults: dict, site: dict) -> list[str]:
     locked = sorted(requested - _overridable(defaults))
     if locked:
         raise ConfigError(f"site overrides keys that are not site_overridable: {locked}")
+    # 1c) v11.4: a value of the wrong type would merge and fail later, far from its cause.
+    for key in sorted(requested):
+        default, value = _leaf(defaults, key), _leaf(site["overrides"], key)
+        if not _same_type(default, value):
+            raise ConfigError(
+                f"site override {key}: expected {type(default).__name__}, got {type(value).__name__}"
+            )
     return sorted(requested)
 
 def _check_no_absolute_paths(defaults: dict) -> None:
@@ -1262,28 +1291,70 @@ def _check_no_absolute_paths(defaults: dict) -> None:
     if bad:
         raise ConfigError(f"absolute paths belong in site.yaml, not in configs/: {bad}")
 
-def _check_cameras(site: dict, site_dir: Path) -> None:
+def _check_camera_ids(site: dict) -> None:
+    # 3a) v11.4: front-door and front_door both map to VVA_CAM_FRONT_DOOR_*, and "../x"
+    # escapes site_dir — only the SITE_ID alphabet, with a hyphen, is a safe id.
+    ids = site.get("cameras")
+    if not isinstance(ids, list) or not ids:
+        raise ConfigError("site.cameras must be a non-empty list of camera ids")
+    bad = sorted(str(cid) for cid in ids if not isinstance(cid, str) or not CAMERA_ID.match(cid))
+    if bad:
+        raise ConfigError(f"camera ids must match {CAMERA_ID.pattern}: {bad}")
+    duplicates = sorted({cid for cid in ids if ids.count(cid) > 1})
+    if duplicates:
+        raise ConfigError(f"duplicate camera ids: {duplicates}")
+
+def _load_camera_profile(path: Path) -> dict:
+    # 3b) v11.4: malformed YAML is a config error, not a traceback in the middle of startup.
+    try:
+        data = yaml.safe_load(path.read_text())
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"{path}: invalid YAML: {exc}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("camera"), dict):
+        raise ConfigError(f"{path}: expected a mapping with a 'camera' mapping")
+    return data["camera"]
+
+def _check_sar(camera_id: str, profile: dict) -> None:
+    # 3c) v11.4: the field documents the §0 measurement; the streams must still agree with it.
+    try:
+        substream, mainstream = profile["substream"], profile["mainstream"]
+        expected = (substream["height"] / mainstream["height"]) / (substream["width"] / mainstream["width"])
+    except (KeyError, TypeError, ZeroDivisionError) as exc:
+        raise ConfigError(f"cameras/{camera_id}.yaml: substream/mainstream need numeric width and height") from exc
+    value = profile.get("sample_aspect_ratio")
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ConfigError(f"cameras/{camera_id}.yaml: sample_aspect_ratio must be a number, got {value!r}")
+    if abs(value - expected) >= 0.01:
+        raise ConfigError(
+            f"cameras/{camera_id}.yaml: sample_aspect_ratio {value} disagrees with the streams "
+            f"(expected {expected:.4f}) — re-measure §0 or fix the resolutions"
+        )
+
+def _check_cameras(defaults: dict, site: dict, site_dir: Path) -> None:
     # 3) Every camera is complete and decided: profile, zones, no placeholders, a valid aspect_correction.
+    zones_dir = Path(defaults["events"]["zone_rules"]["zone_definitions"])   # v11.4: one source of truth (§1.5)
     for camera_id in site["cameras"]:
-        for rel in (f"cameras/{camera_id}.yaml", f"zones/{camera_id}.json"):
+        for rel in (Path("cameras") / f"{camera_id}.yaml", zones_dir / f"{camera_id}.json"):
             path = site_dir / rel
             if not path.exists():
                 raise ConfigError(f"missing {rel} in site bundle {site_dir}")
             if PLACEHOLDER.search(path.read_text()):
                 raise ConfigError(f"unfilled <...> placeholder in {path}")
-        profile = yaml.safe_load((site_dir / f"cameras/{camera_id}.yaml").read_text())["camera"]
+        profile = _load_camera_profile(site_dir / f"cameras/{camera_id}.yaml")
         value = profile.get("aspect_correction")
         if value not in ASPECT_CORRECTION:
             raise ConfigError(f"cameras/{camera_id}.yaml: aspect_correction must be one of "
                               f"{sorted(ASPECT_CORRECTION)}, got {value!r} — decide it with "
                               "DETECTION_EVAL at milestone 1 (§1.3)")
+        _check_sar(camera_id, profile)
 
 def _required_secrets(defaults: dict, site: dict) -> dict[str, str]:
     """v11.4: every env var the enabled configuration will read, mapped to the bundle file that defines it."""
     need = {"VVA_API_TOKEN": "secrets.env"}
     for camera_id in site["cameras"]:
         env_id = camera_id.upper().replace("-", "_")
-        for suffix in ("SUB_URL", "MAIN_URL", "ONVIF_HOST", "ONVIF_USER", "ONVIF_PASSWORD"):
+        # ONVIF credentials belong to the §1.1 discovery step, not to startup (v11.4).
+        for suffix in ("SUB_URL", "MAIN_URL"):
             need[f"VVA_CAM_{env_id}_{suffix}"] = "secrets.env"
     notify = defaults["notify"]
     if notify["enabled"]:
@@ -1313,9 +1384,10 @@ def validate_site(defaults: dict, site: dict, site_dir: Path) -> list[str]:
     """Raise ConfigError on the first broken bundle invariant; return the overridden keys for the startup log."""
     if not SITE_ID.match(site.get("site_id", "")):
         raise ConfigError("site_id must be a lowercase slug such as 'casa-roma'")
+    _check_camera_ids(site)
     overridden = _check_overrides(defaults, site)
     _check_no_absolute_paths(defaults)
-    _check_cameras(site, site_dir)
+    _check_cameras(defaults, site, site_dir)
     _check_secrets(defaults, site, site_dir)
     _check_storage(site)
     return overridden
@@ -1323,12 +1395,18 @@ def validate_site(defaults: dict, site: dict, site_dir: Path) -> list[str]:
 
 The list `validate_site()` returns is written to the startup log and to the harness output (§1.11). In a business, it answers the question "how does this house differ from the others?".
 
-**v11.4 corrections — four rules the v11.3 code did not enforce as written.**
+**v11.4 corrections — ten corrections to the v11.3 validator.**
 
 1. **Rule 2 checks paths, not strings that start with "/".** The published default `observability.metrics_endpoint: /metrics` is an HTTP route, and v11.3 rejected it, so every startup failed. The rule now walks `(key, value)` pairs, tests `Path(v).is_absolute()` and exempts URL routes **by key** in `NON_FS_KEYS`. Exempting by key rather than by naming convention (`*_path`, `*_dir`) keeps the rule fail-closed: `zone_definitions` and `ground_truth_csv` are paths that no suffix rule would catch.
 2. **An override must exist *and* be declared overridable.** Rejecting unknown keys only catches typos; it still let a house change `min_confirmed_hits`, the event cooldowns or `detector.confidence_threshold`, contradicting the §1.4 note and `AGENTS.md` invariant 4. Each defaults block now lists, next to the parameters it governs, the keys a site may change (`site_overridable`, today only the two pixel-space tracker keys). Opening another one is a reviewed commit, not a line in someone's `site.yaml`.
-3. **Every secret the enabled configuration reads is checked.** `_required_secrets()` derives the names from the configuration itself (ONVIF and stream URLs per camera, the enabled notification channels, the dead-man's switch, `VVA_API_TOKEN`) and the file that must define each one. An empty value counts as missing, and every missing **name** is reported in one error — never a value — so a new installation is fixed in one pass rather than one restart per secret.
+3. **Every secret the enabled configuration reads is checked.** `_required_secrets()` derives the names from the configuration itself (the per-camera stream URLs, the enabled notification channels, the dead-man's switch, `VVA_API_TOKEN`) and the file that must define each one. An empty value counts as missing, and every missing **name** is reported in one error — never a value — so a new installation is fixed in one pass rather than one restart per secret.
 4. **`aspect_correction` is checked against its enum.** `undecided` is not a `<...>` placeholder, so v11.3 let it through, and the inverse box transform (§1.3) would run with an undefined step. An enum check also catches typos such as `square_pixel`, which a placeholder check cannot.
+5. **Camera ids are validated and unique.** Only the `SITE_ID` alphabet with a hyphen is accepted, because `front-door` and `front_door` both map to `VVA_CAM_FRONT_DOOR_*` — two cameras would share credentials silently — and an id like `../x` would escape the bundle through `site_dir / f"cameras/{camera_id}.yaml"`.
+6. **The zones directory has one source of truth.** `_check_cameras()` resolves `events.zone_rules.zone_definitions` from the defaults instead of a hard-coded `zones/`, so it checks the same path `validate_config()` will read (`AGENTS.md` invariant 4).
+7. **A malformed camera profile raises `ConfigError`.** Invalid YAML, an empty file, a non-mapping or a missing `camera` mapping used to surface as `yaml.YAMLError`, `TypeError` or `KeyError`; startup now names the file and refuses to continue.
+8. **SAR is consistent with the streams.** `sample_aspect_ratio` must equal `(sub_h/main_h) / (sub_w/main_w)` within 0.01; the stored field still documents the §0 measurement, but resolution drift now fails loudly instead of silently stretching people. The guide's 720×576 / 2560×1440 profile at 1.42 passes (expected 1.4222).
+9. **Override values must match their default's type.** An int is accepted where the default is a float, but a bool is never accepted where the default is a number (`bool` subclasses `int`), and a string such as `"abc"` for a pixel distance fails at startup with the key and both types instead of exploding later.
+10. **ONVIF credentials are setup-only, not startup secrets.** The pipeline reads `VVA_CAM_<ID>_SUB_URL`/`_MAIN_URL`; the ONVIF host, user and password are needed only by the §1.1 discovery step that prints those URIs, so `_required_secrets()` no longer demands them at startup.
 
 Each rule is now its own helper, keeping every function inside the McCabe ≤ 10 limit of `AGENTS.md`.
 
