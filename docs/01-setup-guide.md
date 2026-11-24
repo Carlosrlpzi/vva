@@ -382,23 +382,3 @@ At this point everything is installed and verified — hardware, OS, network, AI
 - [ ] Git repo initialized with the module scaffold committed
 
 Once every box is checked, you're ready to move on to writing the actual ingestion → detection → event pipeline.
-
-
-root@svva:/etc/wireguard# cat server_private.key
-OFn57s/CT3uBJWTf2AvvXWIKt+Dfwve1DlRZuYaztWo=
-
-root@svva:/etc/wireguard# cat laptop_public.key
-SgNfaHun+UsXiFqddQXi5sDR2Jl+OvYmLavnMHn7sjU=
-
-root@svva:/etc/wireguard# cat phone_public.key
-MvmbZ58jpBvv1bFn3j08ypwcuPT7BolmMpRWHpz3qwg=
-
-[Interface]
-PrivateKey = <contenido de laptop_private.key>
-Address = <PI_IP>/24
-
-[Peer]
-PublicKey = prE8LPUuDmBZ5I6X8LxXyoVBSyv9/rAPVJyfiL2eaQA=
-Endpoint = <tu-ip-publica-o-dominio-DDNS>:51820
-AllowedIPs = <HOME_SUBNET>/24, <PI_SUBNET>/24
-PersistentKeepalive = 25
