@@ -68,10 +68,13 @@ because that would let a zone claim night coverage without evidence.
 Day coverage
 ------------
 Day coverage is the day verdict in :class:`PixelBudget`: ``day_covered`` is
-``model_height_px >= h_min_px`` (inclusive, matching the night comparison). ``h_min_px`` is
-owned by ``configs/pixel_budget.yaml`` and read once through
-:func:`load_pixel_budget_config`; the pure calculators take it as a keyword and do no I/O.
-The threshold is echoed in the result so a verdict can be traced to its value.
+``zone_distance_m <= night.optical_floor_m``, the same float comparison the night side uses.
+That is mathematically equivalent to ``model_height_px >= h_min_px`` (both descend from the
+same pinhole formula), but comparing distances avoids a one-ulp disagreement between the day
+and night verdicts exactly at the boundary. ``h_min_px`` is owned by
+``configs/pixel_budget.yaml`` and read through :func:`load_pixel_budget_config`; the pure
+calculators take it as a keyword and do no I/O. The threshold is echoed in the result so a
+verdict can be traced to its value.
 
 Limitations (a valid result is not a guarantee)
 -----------------------------------------------
@@ -94,10 +97,11 @@ Limitations (a valid result is not a guarantee)
 from __future__ import annotations
 
 import math
+from collections.abc import Hashable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 import yaml
 
@@ -105,14 +109,37 @@ MODEL_INPUT_SIZE_PX: Final[int] = 640
 """Side, in pixels, of the square model input the frame is letterboxed into (guide section 1.3)."""
 
 
+class _DuplicateKeyError(ValueError):
+    """Raised by :class:`_UniqueKeyLoader` when a mapping key repeats."""
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """``yaml.SafeLoader`` that rejects a repeated mapping key instead of keeping the last."""
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Hashable, Any]:
+        """Build one mapping after rejecting any duplicate key it contains."""
+        seen: set[Hashable] = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            try:
+                duplicate = key in seen
+            except TypeError:
+                # Let SafeConstructor report an unhashable key in its own words.
+                return super().construct_mapping(node, deep=deep)
+            if duplicate:
+                raise _DuplicateKeyError(f"duplicate key {key!r} at line {key_node.start_mark.line + 1}")
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
 @dataclass(frozen=True)
 class PixelBudgetConfig:
     """Pixel-budget thresholds read from ``configs/pixel_budget.yaml``.
 
     Attributes:
-        h_min_px: Minimum acceptable day model-input height in pixels. This is the single
-            owner of the threshold; the pure calculators take it as a keyword and echo it
-            in their result.
+        h_min_px: Minimum acceptable day model-input height in pixels. The owner of the
+            threshold is ``configs/pixel_budget.yaml``; this dataclass only carries the
+            validated value that the pure calculators receive and echo in their result.
 
     """
 
@@ -129,14 +156,15 @@ def load_pixel_budget_config(path: Path) -> PixelBudgetConfig:
     ``path`` is required: the pure calculators do no I/O, so callers choose the file (the
     repository default is ``configs/pixel_budget.yaml``). The document must be a mapping
     with exactly the key ``h_min_px``. Unknown keys, a missing key, a non-mapping document,
-    an unreadable file and invalid values all fail loud with ``ValueError``.
+    an unreadable file, duplicate keys and invalid values all fail loud with ``ValueError``.
 
     Args:
         path: YAML file to read.
 
     Raises:
-        ValueError: If the file cannot be read, is not valid YAML, is not a mapping, does
-            not contain exactly ``h_min_px``, or the value is not finite and > 0.
+        ValueError: If the file cannot be read, is not valid YAML, is not a mapping,
+            duplicates a key, does not contain exactly ``h_min_px``, or the value is not
+            finite and > 0.
 
     """
     try:
@@ -144,7 +172,9 @@ def load_pixel_budget_config(path: Path) -> PixelBudgetConfig:
     except OSError as exc:
         raise ValueError(f"cannot read pixel budget config {path}: {exc}") from exc
     try:
-        document = yaml.safe_load(raw)
+        document = yaml.load(raw, Loader=_UniqueKeyLoader)
+    except _DuplicateKeyError as exc:
+        raise ValueError(f"pixel budget config {path}: {exc}") from exc
     except yaml.YAMLError as exc:
         raise ValueError(f"invalid YAML in pixel budget config {path}: {exc}") from exc
     if not isinstance(document, dict):
@@ -226,8 +256,9 @@ class PixelBudget:
         model_height_px: Day model-input height at ``zone_distance_m``, in pixels.
         h_min_px: Minimum acceptable day model-input height used for the verdict, in pixels;
             echoed from ``configs/pixel_budget.yaml`` for traceability.
-        day_covered: Whether ``model_height_px >= h_min_px`` (inclusive, matching the night
-            comparison).
+        day_covered: Whether ``zone_distance_m <= night.optical_floor_m`` (inclusive, the
+            same comparison the night side uses). Mathematically equivalent to
+            ``model_height_px >= h_min_px``; see the module docstring.
         night: Nighttime boundary and its limiting factor for the same zone.
 
     """
@@ -240,17 +271,31 @@ class PixelBudget:
     night: NightBudget
 
     def __post_init__(self) -> None:
-        """Reject non-finite day fields or a day verdict inconsistent with the threshold."""
+        """Reject day/night fields that disagree with each other or with the threshold."""
         _require_positive_finite(self.zone_distance_m, "zone_distance_m")
         _require_positive_finite(self.letterbox_scale, "letterbox_scale")
         model_height = _require_positive_finite(self.model_height_px, "model_height_px")
         h_min = _require_positive_finite(self.h_min_px, "h_min_px")
+        object.__setattr__(self, "h_min_px", h_min)
         if not isinstance(self.day_covered, bool):
             raise ValueError(f"day_covered must be a bool, got {self.day_covered!r}")
-        if self.day_covered is not (model_height >= h_min):
-            raise ValueError("day_covered must equal model_height_px >= h_min_px")
         if not isinstance(self.night, NightBudget):
             raise ValueError(f"night must be a NightBudget, got {self.night!r}")
+        # The night optical floor encodes the threshold it was computed with. Recover that
+        # threshold from the pinhole relation h_px = C / distance, floor = C / h_min (C is the
+        # same geometry), so a result cannot pair a day threshold with a night for another.
+        implied_h_min = model_height * self.zone_distance_m / self.night.optical_floor_m
+        if not math.isclose(implied_h_min, h_min, rel_tol=1e-9, abs_tol=0.0):
+            raise ValueError(
+                "night.optical_floor_m was computed with a different threshold: "
+                f"implied h_min_px {implied_h_min!r} != {h_min!r}"
+            )
+        # A covered night can never coexist with an uncovered day: the night boundary never
+        # exceeds the optical floor. Check it explicitly so a future change cannot pair them.
+        if self.night.zone_covered is True and self.day_covered is False:
+            raise ValueError("night.zone_covered cannot be true while day_covered is false")
+        if self.day_covered is not (self.zone_distance_m <= self.night.optical_floor_m):
+            raise ValueError("day_covered must equal zone_distance_m <= night.optical_floor_m")
 
 
 def _require_unevaluated_night(night: NightBudget) -> None:
@@ -565,7 +610,9 @@ def compute_pixel_budget(
     the two entry points. ``h_min_px`` is required because the optical floor always depends
     on it; pass ``PixelBudgetConfig.h_min_px`` from ``configs/pixel_budget.yaml``. The
     threshold is echoed in the result and ``day_covered`` is inclusive
-    (``model_height_px >= h_min_px``).
+    (``zone_distance_m <= night.optical_floor_m``). That distance comparison is used instead
+    of ``model_height_px >= h_min_px`` so the day and night verdicts cannot disagree by one
+    ulp at the boundary; the two are mathematically equivalent.
 
     Args:
         frame_width_px: Width in pixels of the array passed to the letterbox step.
@@ -607,7 +654,7 @@ def compute_pixel_budget(
         letterbox_scale=scale,
         model_height_px=day_height,
         h_min_px=minimum,
-        day_covered=day_height >= minimum,
+        day_covered=zone_distance_m <= night.optical_floor_m,
         night=night,
     )
 

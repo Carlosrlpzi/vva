@@ -202,12 +202,13 @@ def test_day_covered_is_false_below_the_threshold() -> None:
     assert budget.day_covered is False
 
 
-def test_day_covered_is_inclusive_at_the_threshold() -> None:
-    day_height = _day_h_px(20.0)
-    budget = compute_pixel_budget(**GEOMETRY, zone_distance_m=20.0, h_min_px=day_height)
-    assert budget.model_height_px == pytest.approx(43.52, abs=1e-9)
-    assert budget.h_min_px == day_height
+def test_day_covered_is_inclusive_at_the_exact_optical_floor() -> None:
+    floor = optical_floor_m(**GEOMETRY, h_min_px=H_MIN_PX)
+    budget = compute_pixel_budget(**GEOMETRY, zone_distance_m=floor, h_min_px=H_MIN_PX, ir_range_m=30.0)
+    assert budget.model_height_px == pytest.approx(H_MIN_PX, rel=1e-9)
+    assert budget.h_min_px == H_MIN_PX
     assert budget.day_covered is True
+    assert budget.night.zone_covered is True
 
 
 # ------------------------------------------------------------------ frame geometry (9)
@@ -463,19 +464,48 @@ def test_pixel_budget_rejects_a_non_bool_day_verdict() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    ("model_height", "h_min", "day_covered"),
-    [(50.0, 32.0, False), (50.0, 60.0, True)],
-)
-def test_pixel_budget_rejects_an_inconsistent_day_verdict(model_height: float, h_min: float, day_covered: bool) -> None:
+def test_pixel_budget_rejects_a_night_computed_with_another_threshold() -> None:
+    # The night was computed with h_min 32; the result claims 40.
+    night = _night(10.0, 30.0)
+    with pytest.raises(ValueError, match="h_min_px"):
+        PixelBudget(
+            zone_distance_m=10.0,
+            letterbox_scale=letterbox_scale(FRAME_WIDTH_PX, FRAME_HEIGHT_PX, input_size_px=INPUT_SIZE_PX),
+            model_height_px=_day_h_px(10.0),
+            h_min_px=40.0,
+            day_covered=True,
+            night=night,
+        )
+
+
+def test_pixel_budget_rejects_a_covered_night_with_an_uncovered_day() -> None:
+    night = _night(10.0, 30.0)
+    assert night.zone_covered is True
     with pytest.raises(ValueError, match="day_covered"):
         PixelBudget(
             zone_distance_m=10.0,
-            letterbox_scale=1.0,
-            model_height_px=model_height,
-            h_min_px=h_min,
+            letterbox_scale=letterbox_scale(FRAME_WIDTH_PX, FRAME_HEIGHT_PX, input_size_px=INPUT_SIZE_PX),
+            model_height_px=_day_h_px(10.0),
+            h_min_px=H_MIN_PX,
+            day_covered=False,
+            night=night,
+        )
+
+
+@pytest.mark.parametrize(
+    ("zone_distance_m", "day_covered"),
+    [(10.0, False), (30.0, True)],
+)
+def test_pixel_budget_rejects_an_inconsistent_day_verdict(zone_distance_m: float, day_covered: bool) -> None:
+    night = _night(zone_distance_m, 100.0)  # same h_min; the boundary is the optical floor
+    with pytest.raises(ValueError, match="day_covered"):
+        PixelBudget(
+            zone_distance_m=zone_distance_m,
+            letterbox_scale=letterbox_scale(FRAME_WIDTH_PX, FRAME_HEIGHT_PX, input_size_px=INPUT_SIZE_PX),
+            model_height_px=_day_h_px(zone_distance_m),
+            h_min_px=H_MIN_PX,
             day_covered=day_covered,
-            night=_night(10.0, 30.0),
+            night=night,
         )
 
 
@@ -489,6 +519,26 @@ def _write_config(tmp_path: Path, text: str) -> Path:
 def test_load_pixel_budget_config_reads_the_threshold(tmp_path: Path) -> None:
     path = _write_config(tmp_path, "h_min_px: 32.5\n")
     assert load_pixel_budget_config(path) == PixelBudgetConfig(h_min_px=32.5)
+
+
+def test_load_pixel_budget_config_rejects_a_missing_file(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="cannot read pixel budget config"):
+        load_pixel_budget_config(tmp_path / "nope.yaml")
+
+
+def test_load_pixel_budget_config_rejects_invalid_yaml(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="invalid YAML"):
+        load_pixel_budget_config(_write_config(tmp_path, "h_min_px: [\n"))
+
+
+def test_load_pixel_budget_config_rejects_duplicate_keys(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, "h_min_px: 32\nh_min_px: 64\n")
+    with pytest.raises(ValueError) as excinfo:
+        load_pixel_budget_config(path)
+    message = str(excinfo.value)
+    assert "duplicate key" in message
+    assert "h_min_px" in message
+    assert str(path) in message
 
 
 def test_load_pixel_budget_config_rejects_a_missing_key(tmp_path: Path) -> None:
