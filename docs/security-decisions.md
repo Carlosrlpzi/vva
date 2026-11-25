@@ -34,6 +34,12 @@ copy a secret, key, token or credential into this file; refer to it by commit an
 - **Mitigation:** GitHub branch protection on `main` ("Do not allow force pushes", "Do not
   allow deletions"), configured by the owner in the repository settings. GitHub also refuses
   to delete the default branch.
-- **Pending:** automated tests for `.githooks/pre-push` and `install/vva-audit-run`
-  (temporary repositories, a fake `sudo`, no root), written outside the builder because the
-  builder never touches the auditor.
+- **Merge rule enforced by the hook (2026-11-25):** a report with any line starting with
+  `[CRITICAL]` or `[HIGH]` blocks the push even under `APPROVE_WITH_CHANGES`.
+- **Deterministic review:** `vva-review-bundle` (root-owned in `/usr/local/bin`) flags any
+  owner-only or agent-config path a builder bundle changes, using the installed wrapper's
+  `EXCLUDED_NAMES`, so the LLM auditor is not the only control.
+- **Tests:** `tests/test_audit_tools.py` covers the hook, the wrapper's checkout and `/etc`
+  checks, and the review script, with temporary repositories and a fake `sudo` (no root).
+  It is owner-only, like `install/` and `.githooks/`.
+- **Pending:** GitHub branch protection on `main` (owner, repository settings).

@@ -35,7 +35,8 @@
 #   5  opencode binary not found
 #   6  opencode version differs from the pin
 #   7  opencode binary path not root-owned or group/other-writable
-#   8  /etc/vva-audit config or key file not root-owned or group/other-writable
+#   8  /etc/vva-audit config, its contents or the key file: not root-owned, group/other-
+#      writable, a symlink, or neither a regular file nor a directory
 #   9  bundle empty or invalid (rejected by git clone)
 #   10 a SHA of the range is not in the bundle
 #   11 an excluded path is present in the checkout
@@ -276,4 +277,8 @@ main() {
   "$bin" run --agent vva-audit --command audit "$range" < /dev/null
 }
 
-main "$@"
+# Run only when executed. tests/test_audit_tools.py sources this file to exercise the
+# checkout and /etc checks without root; sudo can only execute it, never source it.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

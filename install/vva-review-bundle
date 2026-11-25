@@ -1,0 +1,108 @@
+#!/bin/bash
+# /usr/local/bin/vva-review-bundle
+#
+# Deterministic first pass over a bundle delivered by the builder, run by carlosr inside the
+# trusted repository (~/src/vva). It never runs code from the bundle and never merges.
+#
+#   vva-review-bundle /srv/vva-xfer/to-trusted/<name>.bundle [<base>]     (base: main)
+#
+# Install (root-owned, so the audited side cannot change what this check looks for):
+#   sudo install -o root -g root -m 0755 install/vva-review-bundle /usr/local/bin/vva-review-bundle
+#
+# For every branch in the bundle it prints the commits and the diffstat against <base>, and
+# lists any changed path that belongs to the owner or configures an agent:
+#   - the names in EXCLUDED_NAMES of the INSTALLED /usr/local/bin/vva-audit-run, at any depth
+#     (read from that file, so this list and the auditor's exclusions cannot drift apart);
+#   - the owner-only paths in OWNER_PATHS below, from the repository root.
+#
+# Exit codes: 0 nothing protected changed; 1 a protected path changed (review it by hand,
+# it is not necessarily wrong); 2 usage; 3 not run from a trusted checkout; 4 bundle invalid;
+# 5 cannot read the protected names from the installed wrapper.
+
+set -euo pipefail
+
+readonly WRAPPER="/usr/local/bin/vva-audit-run"
+# Owner-only paths that are not agent-config names: changes here are drafted and committed
+# by carlosr, never by the builder (docs/guia-opencode-ubuntu.md, "Rutina de trabajo").
+readonly OWNER_PATHS=(prompts tests/test_skills_consistency.py tests/test_audit_tools.py install .githooks
+  docs/guia-opencode-ubuntu.md docs/security-decisions.md)
+
+die() {
+  local code="$1"
+  shift
+  echo "vva-review-bundle: $*" >&2
+  exit "$code"
+}
+
+# Prints the names of EXCLUDED_NAMES from the installed wrapper, one per line, and fails if
+# the line is missing or a name contains anything but a safe file-name character.
+read_excluded_names() {
+  local line names name
+  [[ -f "$WRAPPER" && ! -L "$WRAPPER" ]] || die 5 "${WRAPPER} missing or a symlink"
+  line="$(grep -E '^readonly EXCLUDED_NAMES=\(.*\)$' "$WRAPPER" || true)"
+  [[ -n "$line" ]] || die 5 "EXCLUDED_NAMES not found in ${WRAPPER}"
+  names="${line#*\(}"
+  names="${names%\)}"
+  for name in $names; do
+    [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || die 5 "unexpected name in EXCLUDED_NAMES: ${name}"
+    printf '%s\n' "$name"
+  done
+}
+
+main() {
+  local bundle="${1:-}" base="${2:-main}" top head ref names name hits=0
+  [[ -n "$bundle" && $# -le 2 ]] || die 2 "usage: vva-review-bundle <bundle> [<base>]"
+  [[ -f "$bundle" && ! -L "$bundle" ]] || die 2 "${bundle} is not a regular file"
+
+  # Decide where we are BEFORE running any git command: git reads the repository's own
+  # config and hooks, so it must never start inside a directory the audited side could
+  # write (the taller, an old taller, a mailbox). Allowlist, not blocklist: the trusted
+  # repository lives in the caller's home, which no other user can write.
+  local here home
+  here="$(realpath -e -- "$PWD")" || die 3 "cannot resolve the current directory"
+  home="$(realpath -e -- "$HOME")" || die 3 "cannot resolve HOME"
+  case "$here/" in
+    "$home"/*) ;;
+    *) die 3 "run it inside the trusted repository under ${home}, not in ${here}" ;;
+  esac
+  top="$(git rev-parse --show-toplevel 2>/dev/null)" || die 3 "run it inside the trusted repository"
+  case "$(realpath -e -- "$top")/" in
+    "$home"/*) ;;
+    *) die 3 "the repository root ${top} is outside ${home}" ;;
+  esac
+  git rev-parse --verify --quiet "${base}^{commit}" >/dev/null || die 2 "unknown base: ${base}"
+
+  mapfile -t names < <(read_excluded_names)
+  local specs=()
+  for name in "${names[@]}"; do
+    specs+=(":(top,glob)**/${name}" ":(top,glob)**/${name}/**")
+  done
+  for name in "${OWNER_PATHS[@]}"; do
+    specs+=(":(top)${name}")
+  done
+
+  git bundle verify -q "$bundle" >/dev/null 2>&1 || die 4 "git bundle verify rejected ${bundle}"
+  # Remote-tracking refs only: nothing is checked out, merged or executed.
+  git fetch -q "$bundle" '+refs/heads/*:refs/remotes/taller/*' || die 4 "git fetch from ${bundle} failed"
+
+  while read -r _ ref; do
+    [[ "$ref" == refs/heads/* ]] || continue
+    head="refs/remotes/taller/${ref#refs/heads/}"
+    echo "=== ${ref#refs/heads/}  (${base}...${head#refs/remotes/})"
+    git log --format='%h %an %s' "${base}..${head}"
+    git diff --stat "${base}...${head}"
+    local changed
+    changed="$(git diff --name-only "${base}...${head}" -- "${specs[@]}")"
+    if [[ -n "$changed" ]]; then
+      echo "!!! protected paths changed (owner-only or agent config):"
+      sed 's/^/    /' <<< "$changed"
+      hits=1
+    else
+      echo "ok: no protected path changed"
+    fi
+  done < <(git bundle list-heads "$bundle")
+
+  exit "$hits"
+}
+
+main "$@"

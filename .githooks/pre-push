@@ -6,7 +6,9 @@
 #   install -D -m 0700 .githooks/pre-push ~/.config/vva/hooks/pre-push
 #   git config core.hooksPath ~/.config/vva/hooks
 #
-# - Blocks the push only when the auditor returns VERDICT: REQUEST_CHANGES.
+# - Blocks the push when the auditor returns VERDICT: REQUEST_CHANGES, when the report has a
+#   CRITICAL or HIGH finding (whatever the verdict), when the report has no parseable
+#   VERDICT, when the audit itself fails, and on the ref rules below (fail closed).
 # - Saves every report under .vva/audits/ (git-ignored).
 # - Bypass deliberately with: git push --no-verify
 # - Skip without bypassing other hooks: VVA_AUDIT=0 git push
@@ -127,9 +129,20 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   # body, or one cut off before the real verdict, must not pass (fail closed).
   verdict="$(grep -v '^[[:space:]]*$' "$report" | tail -n 1 | tr -d '\r' || true)"
 
+  # The owner's merge rule (2026-11-25): nothing ships with an open CRITICAL or HIGH
+  # finding, even under APPROVE_WITH_CHANGES. Findings start with "[SEVERITY] title" at the
+  # beginning of a line (auditor prompt, section 5).
+  blocking="$(grep -cE '^\[(CRITICAL|HIGH)\]' "$report" || true)"
+
   case "$verdict" in
     "VERDICT: APPROVE"|"VERDICT: APPROVE_WITH_CHANGES")
-      echo "[vva-audit] ${verdict} (${local_ref})" >&2
+      if [[ "$blocking" != "0" ]]; then
+        echo "[vva-audit] ${verdict} but ${blocking} CRITICAL/HIGH finding(s) (${local_ref})." \
+          "Read ${report}. Push blocked." >&2
+        status=1
+      else
+        echo "[vva-audit] ${verdict} (${local_ref})" >&2
+      fi
       ;;
     "VERDICT: REQUEST_CHANGES")
       echo "[vva-audit] ${verdict} (${local_ref}). Read ${report}. Push blocked." >&2
