@@ -136,16 +136,33 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   # indentation, `[HIGH]`), changes the case ([High]) or translates the label because the
   # report is written in Spanish ([ALTA], [CRÍTICO]). All of those block too: a badly
   # formatted quote that blocks is the fail-closed side. Only a mention mid-sentence passes.
+  # This regex is only the safety net. No closed list of formats covers everything a model
+  # writes, so the primary signal is the FINDINGS line below.
   blocking="$(grep -ciE '^[[:space:]#>*_`|0-9.)-]*\[(CRITICAL|HIGH|CR(I|Í|í)TIC(O|A)|ALT(O|A))\]' "$report" || true)"
+
+  # Primary signal (owner decision, 2026-11-25): the line right before the VERDICT must be
+  #   FINDINGS: critical=N high=N medium=N low=N
+  # in exactly that form. Missing or malformed counts as a blocking report (fail closed),
+  # and so does critical or high above zero.
+  findings="$(grep -v '^[[:space:]]*$' "$report" | tail -n 2 | head -n 1 | tr -d '\r' || true)"
+  findings_ok=0
+  if [[ "$findings" =~ ^FINDINGS:\ critical=([0-9]+)\ high=([0-9]+)\ medium=([0-9]+)\ low=([0-9]+)$ ]]; then
+    findings_ok=1
+    findings_blocking=$((10#${BASH_REMATCH[1]} + 10#${BASH_REMATCH[2]}))
+  fi
 
   case "$verdict" in
     "VERDICT: APPROVE"|"VERDICT: APPROVE_WITH_CHANGES")
-      if [[ "$blocking" != "0" ]]; then
-        echo "[vva-audit] ${verdict} but ${blocking} CRITICAL/HIGH finding(s) (${local_ref})." \
-          "Read ${report}. Push blocked." >&2
+      if [[ "$findings_ok" != "1" ]]; then
+        echo "[vva-audit] ${verdict} but no valid 'FINDINGS: critical=N high=N medium=N low=N' line" \
+          "right before it (${local_ref}). Read ${report}. Push blocked." >&2
+        status=1
+      elif (( findings_blocking > 0 )) || [[ "$blocking" != "0" ]]; then
+        echo "[vva-audit] ${verdict} but CRITICAL/HIGH finding(s): ${findings}; tagged lines: ${blocking}" \
+          "(${local_ref}). Read ${report}. Push blocked." >&2
         status=1
       else
-        echo "[vva-audit] ${verdict} (${local_ref})" >&2
+        echo "[vva-audit] ${verdict} (${local_ref}); ${findings}" >&2
       fi
       ;;
     "VERDICT: REQUEST_CHANGES")

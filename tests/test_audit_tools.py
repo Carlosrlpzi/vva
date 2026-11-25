@@ -29,6 +29,7 @@ HOOK = ROOT / ".githooks" / "pre-push"
 WRAPPER = ROOT / "install" / "vva-audit-run"
 REVIEW = ROOT / "install" / "vva-review-bundle"
 ZERO = "0" * 40
+CLEAN = "FINDINGS: critical=0 high=0 medium=0 low=0"
 
 pytestmark = pytest.mark.skipif(
     shutil.which("git") is None or shutil.which("bash") is None,
@@ -85,7 +86,7 @@ class HookEnv:
         sudo.chmod(0o755)
         self.log = tmp_path / "audited.log"
         self.report = tmp_path / "report.md"
-        self.set_report("VERDICT: APPROVE")
+        self.set_report(f"{CLEAN}\nVERDICT: APPROVE")
         self.env = {
             **os.environ,
             "PATH": f"{bindir}:{os.environ['PATH']}",
@@ -132,17 +133,30 @@ def test_fast_forward_audits_remote_to_local(hook: HookEnv) -> None:
     assert hook.audited() == [f"{hook.c1}..{hook.c3}"]
 
 
+def _findings(critical: int = 0, high: int = 0, medium: int = 0, low: int = 0) -> str:
+    return f"FINDINGS: critical={critical} high={high} medium={medium} low={low}"
+
+
 @pytest.mark.parametrize(
     ("report", "code"),
     [
-        ("VERDICT: APPROVE", 0),
-        ("[MEDIUM] x\nVERDICT: APPROVE_WITH_CHANGES", 0),
-        ("[LOW] Grouped\nVERDICT: APPROVE_WITH_CHANGES", 0),
-        ("[HIGH] x\nVERDICT: APPROVE_WITH_CHANGES", 1),
-        ("[CRITICAL] x\nVERDICT: APPROVE", 1),
-        ("VERDICT: REQUEST_CHANGES", 1),
+        (f"{CLEAN}\nVERDICT: APPROVE", 0),
+        (f"[MEDIUM] x\n{_findings(medium=1)}\nVERDICT: APPROVE_WITH_CHANGES", 0),
+        (f"[LOW] Grouped\n{_findings(low=1)}\nVERDICT: APPROVE_WITH_CHANGES", 0),
+        (f"[HIGH] x\n{_findings(high=1)}\nVERDICT: APPROVE_WITH_CHANGES", 1),
+        (f"[CRITICAL] x\n{_findings(critical=1)}\nVERDICT: APPROVE", 1),
+        (f"{CLEAN}\nVERDICT: REQUEST_CHANGES", 1),
         ("no verdict here", 1),
-        ("VERDICT: APPROVE\ntrailing text", 1),
+        (f"{CLEAN}\nVERDICT: APPROVE\ntrailing text", 1),
+        # FINDINGS is mandatory, exact, and right before the VERDICT (owner decision).
+        ("VERDICT: APPROVE", 1),
+        ("FINDINGS: critical=0 high=0\nVERDICT: APPROVE", 1),
+        ("findings: critical=0 high=0 medium=0 low=0\nVERDICT: APPROVE", 1),
+        (f"{CLEAN}\nsome text\nVERDICT: APPROVE", 1),
+        # FINDINGS alone blocks, even with no tagged finding line...
+        (f"{_findings(high=1)}\nVERDICT: APPROVE_WITH_CHANGES", 1),
+        # ...and the tag regex is still a safety net if FINDINGS undercounts.
+        (f"[HIGH] x\n{CLEAN}\nVERDICT: APPROVE_WITH_CHANGES", 1),
     ],
 )
 def test_verdict_and_blocking_severities(hook: HookEnv, report: str, code: int) -> None:
@@ -170,7 +184,7 @@ def test_verdict_and_blocking_severities(hook: HookEnv, report: str, code: int) 
     ],
 )
 def test_markdown_wrapped_blocking_severities_still_block(hook: HookEnv, line: str) -> None:
-    hook.set_report(f"{line}\nVERDICT: APPROVE_WITH_CHANGES")
+    hook.set_report(f"{line}\n{CLEAN}\nVERDICT: APPROVE_WITH_CHANGES")
     result = hook.push(f"refs/heads/main {hook.c3} refs/heads/main {hook.c1}")
     assert result.returncode == 1, result.stderr
     assert "CRITICAL/HIGH" in result.stderr
@@ -178,7 +192,7 @@ def test_markdown_wrapped_blocking_severities_still_block(hook: HookEnv, line: s
 
 def test_a_severity_mentioned_mid_sentence_does_not_block(hook: HookEnv) -> None:
     report = "Summary mentions [HIGH] only in passing.\n**[MEDIUM]** x\n| [MEDIUM] | y |\n[ALTERNATIVA] z"
-    hook.set_report(f"{report}\nVERDICT: APPROVE_WITH_CHANGES")
+    hook.set_report(f"{report}\n{_findings(medium=2)}\nVERDICT: APPROVE_WITH_CHANGES")
     result = hook.push(f"refs/heads/main {hook.c3} refs/heads/main {hook.c1}")
     assert result.returncode == 0, result.stderr
 
@@ -410,6 +424,8 @@ def test_review_passes_a_clean_branch(rev: ReviewEnv) -> None:
         ".gitattributes",
         "src/app/.gitattributes",
         ".gitmodules",
+        "tests/conftest.py",
+        "pyproject.toml",
     ],
 )
 def test_review_flags_protected_paths(rev: ReviewEnv, path: str) -> None:
@@ -458,6 +474,23 @@ def test_review_lists_head_of_an_all_bundle_as_not_imported(rev: ReviewEnv) -> N
 
 def test_review_rejects_an_unknown_base(rev: ReviewEnv) -> None:
     assert rev.review(rev.bundle("clean", "src/ok.py"), base="nope").returncode == 2
+
+
+def test_review_rejects_a_branch_name_outside_plain_ascii(rev: ReviewEnv) -> None:
+    # git's check-ref-format accepts bytes >= 0x80 (for example a UTF-8 C1 control); the
+    # script prints branch names and builds refspecs from them, so it only accepts plain ASCII.
+    result = rev.review(rev.bundle("café", "src/ok.py"))
+    assert result.returncode == 4, result.stdout + result.stderr
+    assert _git(rev.trusted, "for-each-ref", "refs/remotes/taller") == ""
+
+
+def test_review_reads_a_private_copy_and_leaves_the_mailbox_untouched(rev: ReviewEnv) -> None:
+    bundle = rev.bundle("clean", "src/ok.py")
+    before = bundle.read_bytes()
+    result = rev.review(bundle)
+    assert result.returncode == 0, result.stderr
+    assert bundle.read_bytes() == before
+    assert "in.bundle" not in result.stdout + result.stderr
 
 
 def test_review_rejects_a_bundle_without_branches(rev: ReviewEnv) -> None:

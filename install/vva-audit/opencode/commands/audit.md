@@ -17,4 +17,4 @@ Repository state at the moment this audit was requested:
 ## Recent commits
 !`git log --oneline -n 15`
 
-Follow your workflow and output format. End with the VERDICT line.
+Follow your workflow and output format. End with the FINDINGS line and then the VERDICT line.

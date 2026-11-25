@@ -20,9 +20,12 @@
 # Fails closed. Exit codes: 0 every branch is clean and there is nothing else in the bundle;
 # 1 a protected path changed, or the bundle carries refs that are not branches (review by
 # hand; not necessarily wrong); 2 usage or unknown base; 3 not run from a trusted checkout;
-# 4 bundle invalid or without branches, or a git command failed; 5 the protected names
-# cannot be read from the installed wrapper. Any other code (bash/git killed) is also a failure.
-# Tags in the bundle are never fetched (--no-tags) and the base is resolved to a SHA from
+# 4 bundle invalid, without branches or with a branch name outside [A-Za-z0-9._/-], or a git
+# command failed; 5 the protected names cannot be read from the installed wrapper. Any other
+# code (bash/git killed) is also a failure.
+# The bundle is copied once to a private directory (the mailbox belongs to the audited side,
+# which could rewrite it between reads); only the listed branches are fetched, one explicit
+# refspec each, with --no-tags and fetch.fsckObjects; the base is resolved to a SHA from
 # refs/heads/ before the fetch, so a smuggled refs/tags/main cannot move it.
 
 set -euo pipefail
@@ -30,8 +33,10 @@ set -euo pipefail
 readonly WRAPPER="/usr/local/bin/vva-audit-run"
 # Owner-only paths that are not agent-config names: changes here are drafted and committed
 # by carlosr, never by the builder (docs/guia-opencode-ubuntu.md, "Rutina de trabajo").
-readonly OWNER_PATHS=(tests/test_skills_consistency.py tests/test_audit_tools.py install .githooks
-  docs/guia-opencode-ubuntu.md docs/security-decisions.md)
+# tests/conftest.py and pyproject.toml because they can change how pytest runs the owner's
+# tests in the taller (autouse fixtures, plugins, addopts), making them pass regardless.
+readonly OWNER_PATHS=(tests/test_skills_consistency.py tests/test_audit_tools.py tests/conftest.py
+  pyproject.toml install .githooks docs/guia-opencode-ubuntu.md docs/security-decisions.md)
 # Git metadata files that change how git shows or fetches content (for example
 # `.gitattributes` with `-diff` hides a file's diff from the reviewer and the auditor), at
 # any depth. Owner-only as well.
@@ -50,7 +55,8 @@ die() {
 # line. Fails (exit 5) if the line is missing or duplicated, or a word is not a plain file
 # name. Called through a command substitution whose status the caller checks.
 read_array() {
-  local wrapper="$1" var="$2" line body word words=()
+  # LC_ALL=C: the name check below must mean ASCII (see is_plain_branch_ref).
+  local LC_ALL=C wrapper="$1" var="$2" line body word words=()
   [[ -f "$wrapper" && ! -L "$wrapper" ]] || die 5 "${wrapper} missing or a symlink"
   line="$(grep -E "^readonly ${var}=\(.*\)\$" "$wrapper" || true)"
   [[ -n "$line" && "$line" != *$'\n'* ]] || die 5 "exactly one 'readonly ${var}=(...)' line expected in ${wrapper}"
@@ -100,6 +106,14 @@ sanitize() {
   LC_ALL=C tr -d '\000-\010\013-\037\177' | LC_ALL=C sed -e 's/\xc2[\x80-\x9f]//g'
 }
 
+# True if $1 is refs/heads/ followed only by ASCII letters, digits, '.', '_', '/', '-'.
+# LC_ALL=C is required: in a UTF-8 locale the bracket range a-z also matches letters such
+# as 'é', so the same regex would accept non-ASCII bytes.
+is_plain_branch_ref() {
+  local LC_ALL=C
+  [[ "$1" =~ ^refs/heads/[A-Za-z0-9._/-]+$ ]]
+}
+
 # The whole review, with the wrapper path as a parameter so tests can pass a synthetic one.
 review() {
   local wrapper="$1" bundle="${2:-}" base="${3:-main}"
@@ -112,6 +126,7 @@ review() {
   local here home top
   here="$(realpath -e -- "$PWD")" || die 3 "cannot resolve the current directory"
   home="$(realpath -e -- "$HOME")" || die 3 "cannot resolve HOME"
+  [[ "$home" != "/" ]] || die 3 "HOME is /: refusing (run it as carlosr, not as root)"
   case "$here/" in
     "$home"/*) ;;
     *) die 3 "run it inside the trusted repository under ${home}, not in ${here}" ;;
@@ -136,31 +151,47 @@ review() {
 
   build_specs "$wrapper"
 
-  git bundle verify -q "$bundle" >/dev/null 2>&1 || die 4 "git bundle verify rejected ${bundle}"
-  local heads
-  heads="$(git bundle list-heads "$bundle")" || die 4 "cannot list the refs of ${bundle}"
+  # The mailbox belongs to the audited side, which could rewrite the bundle between two
+  # reads (TOCTOU). Copy it once into a private directory and read only the copy.
+  local private
+  private="$(mktemp -d)" || die 4 "cannot create a private directory"
+  # shellcheck disable=SC2064  # expand now: $private is local
+  trap "rm -rf -- '${private}'" EXIT
+  cp --no-dereference -- "$bundle" "${private}/in.bundle" || die 4 "cannot copy ${bundle}"
+  bundle="${private}/in.bundle"
 
-  local -a branches=() others=()
+  git bundle verify -q "$bundle" >/dev/null 2>&1 || die 4 "git bundle verify rejected the bundle"
+  local heads
+  heads="$(git bundle list-heads "$bundle")" || die 4 "cannot list the refs of the bundle"
+
+  local -a branches=() others=() refspecs=()
   local ref
   while read -r _ ref; do
     [[ -n "$ref" ]] || continue
     if [[ "$ref" == refs/heads/* ]]; then
+      # Branch names are printed and used as refspecs: plain ASCII only, so no escape
+      # sequence (C1 controls survive git's own check-ref-format) and no refspec syntax.
+      is_plain_branch_ref "$ref" \
+        || die 4 "branch name with unexpected characters: $(printf '%s' "$ref" | sanitize)"
       branches+=("$ref")
+      refspecs+=("+${ref}:refs/remotes/taller/${ref#refs/heads/}")
     else
       others+=("$ref")
     fi
   done <<< "$heads"
-  ((${#branches[@]} > 0)) || die 4 "${bundle} contains no branch (refs/heads/*)"
+  ((${#branches[@]} > 0)) || die 4 "the bundle contains no branch (refs/heads/*)"
 
-  # Remote-tracking refs only: nothing is checked out, merged or executed. --no-tags: a
-  # fetch with a refspec would otherwise auto-follow the bundle's tags into refs/tags/.
-  git fetch -q --no-tags "$bundle" '+refs/heads/*:refs/remotes/taller/*' \
-    || die 4 "git fetch from ${bundle} failed"
+  # Remote-tracking refs only: nothing is checked out, merged or executed. One explicit
+  # refspec per listed branch, so nothing unlisted is imported. --no-tags: a fetch with a
+  # refspec would otherwise auto-follow the bundle's tags into refs/tags/. fsckObjects:
+  # reject malformed objects.
+  git -c fetch.fsckObjects=true fetch -q --no-tags "$bundle" "${refspecs[@]}" \
+    || die 4 "git fetch from the bundle failed"
 
   local hits=0 head changed
   for ref in "${branches[@]}"; do
     head="refs/remotes/taller/${ref#refs/heads/}"
-    echo "=== ${ref#refs/heads/}  (${base} ${base_sha:0:8}...${head#refs/remotes/})"
+    echo "=== ${ref#refs/heads/}  (${base} ${base_sha:0:8}...${head#refs/remotes/})" | sanitize
     git log --format='%h %an %s' "${base_sha}..${head}" | sanitize || die 4 "git log failed"
     git diff --stat "${base_sha}...${head}" | sanitize || die 4 "git diff failed"
     changed="$(git diff --name-only "${base_sha}...${head}" -- "${SPECS[@]}")" || die 4 "git diff failed"

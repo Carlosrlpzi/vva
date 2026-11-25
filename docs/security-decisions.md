@@ -31,15 +31,21 @@ copy a secret, key, token or credential into this file; refer to it by commit an
 - **What it means:** the A6 hook runs only in clones where it is installed and can be skipped
   with `git push --no-verify` or `VVA_AUDIT=0`. It blocks non-fast-forward pushes to the
   default branch, but it does not block deleting a remote branch.
-- **Mitigation:** GitHub branch protection on `main` ("Do not allow force pushes", "Do not
-  allow deletions"), configured by the owner in the repository settings. GitHub also refuses
-  to delete the default branch.
-- **Merge rule enforced by the hook (2026-11-25):** a report with any line starting with
-  `[CRITICAL]` or `[HIGH]` blocks the push even under `APPROVE_WITH_CHANGES`.
+- **Mitigation (planned, not yet active as of 2026-11-25):** GitHub branch protection on
+  `main` ("Do not allow force pushes", "Do not allow deletions"), to be configured by the
+  owner in the repository settings. GitHub already refuses to delete the default branch.
+- **Merge rule enforced by the hook (2026-11-25):** the line right before the `VERDICT` must be
+  `FINDINGS: critical=N high=N medium=N low=N`; the push is blocked if it is missing or
+  malformed, or if `critical` or `high` is above 0, even under `APPROVE_WITH_CHANGES`. A
+  regex over severity-tagged lines (markdown, case and Spanish variants) is a second net.
 - **Deterministic review:** `vva-review-bundle` (root-owned in `/usr/local/bin`) flags any
-  owner-only or agent-config path a builder bundle changes, using the installed wrapper's
-  `EXCLUDED_NAMES`, so the LLM auditor is not the only control.
+  owner-only, agent-config or git-metadata path a builder bundle changes, using the installed
+  wrapper's `EXCLUDED_NAMES` and `EXCLUDED_ROOT_NAMES`, so the LLM auditor is not the only
+  control. It reads a private copy of the bundle, fetches only the listed branches (plain
+  ASCII names) with `--no-tags` and `fetch.fsckObjects`, and pins the base to a SHA first.
 - **Tests:** `tests/test_audit_tools.py` covers the hook, the wrapper's checkout and `/etc`
   checks, and the review script, with temporary repositories and a fake `sudo` (no root).
-  It is owner-only, like `install/` and `.githooks/`.
+  It is owner-only, like `install/` and `.githooks/`. It runs in the taller as
+  `opencode-dev`, so `tests/conftest.py` and `pyproject.toml` are owner-only too: a builder
+  change there could make it pass regardless, and `vva-review-bundle` flags it.
 - **Pending:** GitHub branch protection on `main` (owner, repository settings).

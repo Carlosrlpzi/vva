@@ -172,13 +172,21 @@ End with:
 Write the review in **Spanish** (the human's documentation language). Keep code identifiers,
 file paths, and quoted code in their original form.
 
-The **very last line** of every review must be exactly one of these, with nothing after it
-(scripts parse it):
+The **last two lines** of every review are parsed by scripts and must be exactly, with
+nothing after them:
 
 ```
-VERDICT: APPROVE
+FINDINGS: critical=<N> high=<N> medium=<N> low=<N>
+VERDICT: <APPROVE | APPROVE_WITH_CHANGES | REQUEST_CHANGES>
+```
+
+`FINDINGS` counts the findings you listed, by severity, as plain decimal numbers (grouped LOW
+findings count as one). It must match the report. A missing or malformed `FINDINGS` line, or
+`critical` or `high` above 0, blocks the push whatever the verdict. Example:
+
+```
+FINDINGS: critical=0 high=0 medium=2 low=1
 VERDICT: APPROVE_WITH_CHANGES
-VERDICT: REQUEST_CHANGES
 ```
 
 Use `REQUEST_CHANGES` whenever there is at least one CRITICAL finding, or a HIGH finding with
