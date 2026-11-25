@@ -174,14 +174,36 @@ Nota: `pip` puede conservar el Pillow del sistema; si `mypy` reporta `PIL import
 
 ### Migrar desde el diseño anterior
 
-Si `/srv/pi-vision` ya existe como clon de GitHub de `carlosr` (diseño anterior, modo `2770`), no lo reutilices: `install -d` solo cambia la carpeta, no su contenido, y `git clone … .` falla si no está vacía. Así se migró la segunda PC el 2026-11-25:
+Si `/srv/pi-vision` ya existe como clon de GitHub de `carlosr` (diseño anterior, modo `2770`), no lo reutilices: `install -d` solo cambia la carpeta, no su contenido, y `git clone … .` falla si no está vacía.
 
-1. Respaldar, como `carlosr`, todo lo que no esté publicado: `git bundle create ~/<respaldo>.bundle <ramas> refs/stash` y `git diff > ~/<respaldo>.patch`.
-2. Retirar el auditor viejo: `git -C /srv/pi-vision config --unset core.hooksPath`, borrar `/usr/local/lib/vva/hooks` y la llave del auditor viejo en el home de `opencode-dev`, y reemplazar `/etc/sudoers.d/vva-audit` con la regla nueva.
-3. Sacar del taller lo que no va en git: `.env` va a `~/src/vva/.env` (de `carlosr`, `0600`); los informes viejos de `.vva/audits/` se copian a `~/src/vva/.vva/audits/`.
+**`carlosr` tampoco ejecuta git en el taller viejo.** En el diseño anterior `opencode-dev` podía escribir en el taller, y quizá en su `.git`. Un `core.fsmonitor`, `core.pager`, `alias.*`, `include.path` o un hook plantado ahí se ejecutaría con los privilegios de `carlosr` (sudo, llave de GitHub) en cuanto este corriera cualquier `git` en esa carpeta. Por eso el respaldo lo hace `opencode-dev` y llega por el buzón, igual que en el flujo normal.
+
+1. Respaldar, como `opencode-dev`, todo lo que no esté publicado:
+   ```bash
+   sudo -iu opencode-dev
+   cd /srv/pi-vision
+   git bundle create /srv/vva-xfer/to-trusted/migracion.bundle --branches   # añade refs/stash solo si existe: git stash list
+   git diff > /srv/vva-xfer/to-trusted/migracion.patch
+   exit
+   ```
+   Como `carlosr`, en `~/src/vva`: `git bundle verify` y `git fetch` del bundle (como en «Buzones»). El `.patch` se lee como datos; nunca se aplica sin revisarlo.
+2. Retirar el auditor viejo: borrar `/usr/local/lib/vva/hooks` y la llave del auditor viejo en el home de `opencode-dev`, y reemplazar `/etc/sudoers.d/vva-audit` con la regla nueva. No hace falta tocar la config de git del taller viejo: se retira completo en el paso 4.
+3. Sacar del taller lo que no va en git, con `mv` o `cp`, nunca con git: `.env` va a `~/src/vva/.env` (de `carlosr`, `0600`); los informes viejos de `.vva/audits/` se copian a `~/src/vva/.vva/audits/`.
 4. Mover el taller viejo: `sudo mv /srv/pi-vision /srv/pi-vision.old`, y crear el nuevo con §3 y «Crear el taller desde un bundle».
 5. Como `opencode-dev`, quitar el `safe.directory` viejo: `git config --global --unset-all safe.directory /srv/pi-vision`.
 6. Borrar `/srv/pi-vision.old` solo cuando confirmes que no falta nada.
+
+**Si ya ejecutaste git como `carlosr` en el taller viejo**, revisa sin git que no te plantaron nada:
+
+```bash
+G=/srv/pi-vision.old/.git
+find $G \( ! -user carlosr -o -perm /022 \) -printf '%u:%g %m %p\n'   # qué podía escribir otro usuario
+find $G/hooks -type f ! -name '*.sample'                              # esperado: nada
+grep -niE 'fsmonitor|pager|editor|sshcommand|alias|include|hookspath|textconv|filter|credential|askpass|external' \
+  $G/config $G/info/* 2>/dev/null                                     # esperado: nada
+```
+
+Constancia de la segunda PC (2026-11-25): ahí `carlosr` sí ejecutó git en el taller viejo para respaldarlo. La revisión posterior mostró que `.git` era `carlosr:pivision 2750` y `.git/config` `640`, así que `opencode-dev` no podía cambiar la config ni los hooks; la config no tenía claves ejecutables y no había hooks activos. Lo único escribible por el grupo era `index`, `ORIG_HEAD`, `FETCH_HEAD` y carpetas de `objects/`, que no ejecutan código.
 
 ---
 
@@ -383,13 +405,18 @@ git -C ~/src/vva config --get core.hooksPath
 # Durante una auditoría (lánzala en otra terminal), con el PID de opencode.
 # Se comparan solo NOMBRES con la allowlist de reset_env en install/vva-audit-run;
 # `_` lo añade bash al ejecutar el binario.
-pid=$(pgrep -u vva-audit -f 'opencode run' | head -1)
+# El proceso que se revisa es el hijo directo del wrapper (el opencode que lanzó reset_env).
+wrapper=$(pgrep -u vva-audit -f vva-audit-run | head -1)
+pid=$(pgrep -u vva-audit -P "$wrapper" | head -1)
+[ -n "$wrapper" ] && [ -n "$pid" ] || echo "no hay auditoría en curso: lanza un push y repite"
 sudo cat /proc/$pid/environ | tr '\0' '\n' | cut -d= -f1 | sort > ~/vva-env-names.txt
 printf '%s\n' ANTHROPIC_API_KEY GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM HOME LANG OPENCODE_CONFIG \
   OPENCODE_CONFIG_DIR PATH TMPDIR XDG_CONFIG_HOME _ | sort | diff - ~/vva-env-names.txt
 # Esperado: diff no imprime nada. Cualquier nombre de más es una fuga del entorno del llamador.
-ps -u vva-audit -o args= | grep -c 'sk-ant'
-# Esperado: 0 (la llave no aparece en ninguna línea de comandos)
+# La llave no debe aparecer en ninguna línea de comandos. Se busca el VALOR real, pasado a
+# grep por un descriptor de archivo (no por argv) y sin imprimirlo:
+sudo bash -c 'ps -u vva-audit -o args= | grep -c -F -f <(sed -n "s/^ANTHROPIC_API_KEY=//p" /etc/vva-audit/anthropic.env)'
+# Esperado: 0
 
 # El directorio de trabajo queda vacío
 sudo ls -A /var/lib/vva-audit/work
@@ -609,9 +636,14 @@ Ciclo por cada funcionalidad:
    ```
    Revisa también que el agente no haya tocado archivos tuyos ni del auditor. Es la comprobación determinista; el auditor es un LLM y no debe ser el único control:
    ```bash
-   git diff --name-only main...taller/<branch> -- opencode.json AGENTS.md prompts .opencode \
-     tests/test_skills_consistency.py install .githooks
+   git diff --name-only main...taller/<branch> -- \
+     ':(glob)**/AGENTS.md' ':(glob)**/CLAUDE.md' ':(glob)**/CONTEXT.md' \
+     ':(glob)**/opencode.json' ':(glob)**/opencode.jsonc' \
+     ':(glob)**/.opencode/**' ':(glob)**/.claude/**' ':(glob)**/.agents/**' \
+     prompts tests/test_skills_consistency.py install .githooks
    # Esperado: no imprime nada. Si imprime algo, revisa cada archivo antes de seguir.
+   # Los nombres con **/ coinciden a cualquier profundidad (también en la raíz), igual que
+   # EXCLUDED_NAMES en install/vva-audit-run; si esa lista cambia, cambia esta también.
    ```
    Si el cambio sí tenía que tocar uno de esos archivos (por ejemplo, un parche del auditor), lo redacta y lo commitea `carlosr` en `~/src/vva`, nunca el builder.
 5. Si todo bien: `git merge --ff-only taller/<branch>` y `git push` desde `carlosr`. El hook `~/.config/vva/hooks/pre-push` audita el rango y guarda el informe en `.vva/audits/`.

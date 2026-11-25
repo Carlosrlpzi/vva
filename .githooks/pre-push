@@ -3,7 +3,7 @@
 #
 # Reference copy. The active hook lives OUTSIDE the working tree, so a change here never
 # runs until carlosr reviews and installs it:
-#   install -m 0700 .githooks/pre-push ~/.config/vva/hooks/pre-push
+#   install -D -m 0700 .githooks/pre-push ~/.config/vva/hooks/pre-push
 #   git config core.hooksPath ~/.config/vva/hooks
 #
 # - Blocks the push only when the auditor returns VERDICT: REQUEST_CHANGES.
