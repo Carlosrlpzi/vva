@@ -19,10 +19,13 @@ Te recomiendo **dos capas**:
 
 **Reparto de responsabilidades resultante:**
 
-| Quién | Puede | No puede |
+| Quién | Puede | No puede / no debe |
 |---|---|---|
-| Tu usuario | Revisar diffs, correr pruebas, `git commit`, `git push`, desplegar a la Pi | — |
-| `opencode-dev` | Leer y editar archivos en `/srv/pi-vision`, correr pruebas | Leer tu home, usar `sudo`, hacer push a GitHub, entrar a la Pi |
+| `carlosr` (repo de confianza `~/src/vva`) | Revisar diffs de forma estática, `git merge --ff-only`, `git commit`, `git push` (auditado), correr lo que requiere `root`, desplegar a la Pi | Correr pruebas o código del agente, ejecutar git dentro del taller |
+| `opencode-dev` (taller `/srv/pi-vision`) | Leer y editar archivos del taller, correr pruebas, crear bundles en `/srv/vva-xfer/to-trusted` | Leer tu home, usar `sudo`, hacer push a GitHub, entrar a la Pi, tocar el auditor |
+| `vva-audit` (auditoría) | Auditar un clon nuevo hecho desde un bundle, con config y llave de `root` | Editar archivos, ejecutar código, leer `/home/opencode-dev` |
+
+Detalle de las tres zonas y del flujo de bundles: «Tres zonas (diseño A6)».
 
 ---
 
@@ -65,7 +68,7 @@ groups opencode-dev
 
 ## 3. Carpeta compartida del proyecto
 
-El taller vivirá en `/srv/pi-vision`, fuera de tu home, compartido por el grupo `pivision`. `opencode-dev` es el dueño y escribe en el taller; `carlosr` solo lo lee y nunca ejecuta git ahí.
+El taller vivirá en `/srv/pi-vision`, fuera de tu home, compartido por el grupo `pivision`. `opencode-dev` es el dueño y escribe en el taller. Por regla de trabajo, `carlosr` solo lo lee y nunca ejecuta git ahí. Es una regla, no una barrera: por el `umask 002` y `core.sharedRepository group` los archivos y subcarpetas del taller son escribibles por el grupo. Eso no expone tu lado; lo que importa es que tú nunca ejecutes código ni git del taller.
 
 ```bash
 sudo groupadd pivision
@@ -80,7 +83,7 @@ sudo install -d -o opencode-dev -g pivision -m 2750 /srv/vva-xfer/to-trusted
 sudo install -d -o carlosr -g pivision -m 2750 /srv/vva-xfer/to-taller
 ```
 
-- `2750`: `opencode-dev` lee, escribe y ejecuta; el grupo `pivision` lee y ejecuta; nadie más entra. El `2` (setgid) hace que todo lo nuevo que se cree adentro herede el grupo `pivision`. `carlosr` no escribe en el taller.
+- `2750` en la raíz del taller: `opencode-dev` lee, escribe y ejecuta; el grupo `pivision` lee y ejecuta; nadie más entra. El `2` (setgid) hace que todo lo nuevo que se cree adentro herede el grupo `pivision`.
 
 **Importante:** cierra sesión y vuelve a entrar (o reinicia) para que tu usuario quede en el grupo nuevo. Verifica con:
 
@@ -105,6 +108,17 @@ git remote -v    # origin -> GitHub
 ```
 
 Si clonas por HTTPS en vez de SSH, funciona igual; lo importante es que las credenciales se queden en `carlosr`.
+
+**Activa el hook de auditoría.** Sin este paso los push salen **sin auditar y sin aviso**. Revisa antes la copia de referencia (`.githooks/pre-push`) y después instálala fuera del árbol:
+
+```bash
+install -D -m 0700 .githooks/pre-push ~/.config/vva/hooks/pre-push
+git config core.hooksPath ~/.config/vva/hooks
+git remote set-head origin -a          # el hook necesita origin/HEAD
+git config --get core.hooksPath        # debe imprimir /home/<tu-usuario>/.config/vva/hooks
+```
+
+El hook falla cerrado hasta que el auditor esté instalado (usuario `vva-audit`, wrapper, sudoers y `/etc/vva-audit`; ver «Tres zonas (diseño A6)»): mientras tanto, ningún push sale.
 
 ---
 
@@ -157,6 +171,17 @@ npm --prefix .opencode ci
 ```
 
 Nota: `pip` puede conservar el Pillow del sistema; si `mypy` reporta `PIL import-untyped`, instala la versión fijada en `uv.lock`.
+
+### Migrar desde el diseño anterior
+
+Si `/srv/pi-vision` ya existe como clon de GitHub de `carlosr` (diseño anterior, modo `2770`), no lo reutilices: `install -d` solo cambia la carpeta, no su contenido, y `git clone … .` falla si no está vacía. Así se migró la segunda PC el 2026-11-25:
+
+1. Respaldar, como `carlosr`, todo lo que no esté publicado: `git bundle create ~/<respaldo>.bundle <ramas> refs/stash` y `git diff > ~/<respaldo>.patch`.
+2. Retirar el auditor viejo: `git -C /srv/pi-vision config --unset core.hooksPath`, borrar `/usr/local/lib/vva/hooks` y la llave del auditor viejo en el home de `opencode-dev`, y reemplazar `/etc/sudoers.d/vva-audit` con la regla nueva.
+3. Sacar del taller lo que no va en git: `.env` va a `~/src/vva/.env` (de `carlosr`, `0600`); los informes viejos de `.vva/audits/` se copian a `~/src/vva/.vva/audits/`.
+4. Mover el taller viejo: `sudo mv /srv/pi-vision /srv/pi-vision.old`, y crear el nuevo con §3 y «Crear el taller desde un bundle».
+5. Como `opencode-dev`, quitar el `safe.directory` viejo: `git config --global --unset-all safe.directory /srv/pi-vision`.
+6. Borrar `/srv/pi-vision.old` solo cuando confirmes que no falta nada.
 
 ---
 
@@ -229,9 +254,36 @@ Los directorios son `root:root 0755`; los archivos son `root:root 0644` salvo qu
 - `/etc/vva-audit/opencode/opencode.json`, `/etc/vva-audit/opencode/AGENTS.md`, `/etc/vva-audit/opencode/prompts/vva-audit.md` y `/etc/vva-audit/opencode/commands/audit.md`: copias de `install/vva-audit/opencode/`.
 - `/etc/vva-audit/xdg/opencode`: vacío; debe existir y ser de `root`. OpenCode intenta crearlo al arrancar; como `/etc/vva-audit/xdg` es de `root`, ese intento fallaría, así que debe crearse antes como `root`.
 - `/etc/vva-audit/anthropic.env`: `root:vva-audit 0640`, exactamente una línea `ANTHROPIC_API_KEY=<value>`, una llave de Anthropic usada solo por el auditor. Nunca muestres su contenido.
-- `/opt/opencode/1.19.5/opencode`: `root:root 0755`, del release oficial `anomalyco/opencode` v1.19.5, asset `opencode-linux-x64.tar.gz`, sha256 `588310a336fa3b9df36b3f0225b26f679d453efaad0cf3d66c3651ef3ec1647a`; sha256 del binario extraído `7df4e4136301f16589b0f30bf91a61380fca5f8ef22dd36570f5ebe1d4ec802c`.
+- `/opt/opencode/1.19.5/opencode`: `root:root 0755`, del release oficial `anomalyco/opencode` v1.19.5, asset `opencode-linux-x64.tar.gz`.
+  - **Referencia de integridad:** la única fuente válida es el checksum que GitHub publica para ese asset (el `digest` del asset en la página o en la API del release), obtenido por `carlosr` en su propia sesión. **No uses los valores de este documento como referencia** para una instalación nueva ni para una actualización: este archivo lo puede editar el lado auditado.
+  - Registro, solo como constancia: el 2026-11-25 `carlosr` comprobó que el `.tar.gz` coincide con el digest del release (sha256 `588310a336fa3b9df36b3f0225b26f679d453efaad0cf3d66c3651ef3ec1647a`) y obtuvo con `sudo sha256sum /opt/opencode/1.19.5/opencode` el sha256 del binario instalado (`7df4e4136301f16589b0f30bf91a61380fca5f8ef22dd36570f5ebe1d4ec802c`).
 - `/usr/local/bin/vva-audit-run`: `root:root 0755`.
 - `/etc/sudoers.d/vva-audit`: `root:root 0440`; después, `sudo visudo -c`.
+
+Instalación, como `carlosr` desde `~/src/vva` (el binario de OpenCode se instala antes, según §6.1):
+
+```bash
+sudo useradd --system --home-dir /var/lib/vva-audit --create-home --shell /usr/sbin/nologin vva-audit
+sudo install -d -o vva-audit -g vva-audit -m 0700 /var/lib/vva-audit/work
+
+sudo install -d -o root -g root -m 0755 /etc/vva-audit /etc/vva-audit/opencode \
+  /etc/vva-audit/opencode/commands /etc/vva-audit/opencode/prompts \
+  /etc/vva-audit/xdg /etc/vva-audit/xdg/opencode
+SRC=~/src/vva/install/vva-audit/opencode
+sudo install -o root -g root -m 0644 $SRC/opencode.json $SRC/AGENTS.md /etc/vva-audit/opencode/
+sudo install -o root -g root -m 0644 $SRC/commands/audit.md /etc/vva-audit/opencode/commands/
+sudo install -o root -g root -m 0644 $SRC/prompts/vva-audit.md /etc/vva-audit/opencode/prompts/
+
+# La llave: créala vacía y edítala tú; nunca la pegues en un chat ni en un comando.
+sudo install -o root -g vva-audit -m 0640 /dev/null /etc/vva-audit/anthropic.env
+sudoedit /etc/vva-audit/anthropic.env
+
+sudo install -o root -g root -m 0755 install/vva-audit-run /usr/local/bin/vva-audit-run
+sudo install -o root -g root -m 0440 install/vva-audit.sudoers /etc/sudoers.d/vva-audit
+sudo visudo -c
+```
+
+Cada vez que cambie `install/vva-audit-run`, `install/vva-audit/opencode/` o `.githooks/pre-push`, reinstala la copia correspondiente con el mismo comando.
 
 Códigos de salida de `vva-audit-run` (copiados del encabezado de `install/vva-audit-run`):
 
@@ -323,11 +375,21 @@ sudo chmod g-w /etc/vva-audit/opencode/AGENTS.md
 sudo -u vva-audit ls /home/opencode-dev
 # Esperado: Permission denied
 
-# Durante una auditoría, con el PID de opencode
-sudo cat /proc/<pid>/environ | tr '\0' '\n' | cut -d= -f1
-# Esperado: solo nombres de variables, sin valores
-ps -o args= -p <pid>
-# Esperado: la llave no aparece en la línea de comandos
+# El hook está activo en el repo de confianza
+git -C ~/src/vva config --get core.hooksPath
+# Esperado: /home/<tu-usuario>/.config/vva/hooks
+# Y el primer push real deja un informe nuevo en ~/src/vva/.vva/audits/
+
+# Durante una auditoría (lánzala en otra terminal), con el PID de opencode.
+# Se comparan solo NOMBRES con la allowlist de reset_env en install/vva-audit-run;
+# `_` lo añade bash al ejecutar el binario.
+pid=$(pgrep -u vva-audit -f 'opencode run' | head -1)
+sudo cat /proc/$pid/environ | tr '\0' '\n' | cut -d= -f1 | sort > ~/vva-env-names.txt
+printf '%s\n' ANTHROPIC_API_KEY GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM HOME LANG OPENCODE_CONFIG \
+  OPENCODE_CONFIG_DIR PATH TMPDIR XDG_CONFIG_HOME _ | sort | diff - ~/vva-env-names.txt
+# Esperado: diff no imprime nada. Cualquier nombre de más es una fuga del entorno del llamador.
+ps -u vva-audit -o args= | grep -c 'sk-ant'
+# Esperado: 0 (la llave no aparece en ninguna línea de comandos)
 
 # El directorio de trabajo queda vacío
 sudo ls -A /var/lib/vva-audit/work
@@ -545,10 +607,13 @@ Ciclo por cada funcionalidad:
    git fetch /srv/vva-xfer/to-trusted/<name>.bundle 'refs/heads/*:refs/remotes/taller/*'
    git diff main...taller/<branch>
    ```
-   Revisa también que `opencode.json` no haya cambiado:
+   Revisa también que el agente no haya tocado archivos tuyos ni del auditor. Es la comprobación determinista; el auditor es un LLM y no debe ser el único control:
    ```bash
-   git diff --quiet main...taller/<branch> -- opencode.json || echo "⚠️ opencode.json cambió, revisa antes de seguir"
+   git diff --name-only main...taller/<branch> -- opencode.json AGENTS.md prompts .opencode \
+     tests/test_skills_consistency.py install .githooks
+   # Esperado: no imprime nada. Si imprime algo, revisa cada archivo antes de seguir.
    ```
+   Si el cambio sí tenía que tocar uno de esos archivos (por ejemplo, un parche del auditor), lo redacta y lo commitea `carlosr` en `~/src/vva`, nunca el builder.
 5. Si todo bien: `git merge --ff-only taller/<branch>` y `git push` desde `carlosr`. El hook `~/.config/vva/hooks/pre-push` audita el rango y guarda el informe en `.vva/audits/`.
 6. Devuelve `main` al taller:
    ```bash
