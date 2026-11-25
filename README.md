@@ -18,6 +18,7 @@ enriquecimiento asíncrono posterior al evento.
 | `docs/01-setup-guide.md` | Hardware, SO, red y Hailo |
 | `docs/guia-opencode-ubuntu.md` | OpenCode con usuario dedicado y permisos mínimos |
 | `docs/module-contracts.md` | Contrato por módulo (insumos, salidas, invariantes, tests, medición que lo verifica) |
+| `docs/security-decisions.md` | Riesgos aceptados y decisiones de seguridad que no se ven en el código (p. ej. SD-1: llave de WireGuard en el historial) |
 | `AGENTS.md`, `opencode.json`, `prompts/`, `.opencode/` | Agentes de OpenCode (DeepSeek Flash + Pro), skills y el tool `vva_contract` |
 | `tests/` | Pruebas del paquete de medición y `test_skills_consistency.py` |
 | `schemas/` | JSON Schemas generados con `vva schemas --output schemas` (la fuente de verdad son los modelos Pydantic) |
