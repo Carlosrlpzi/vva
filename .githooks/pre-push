@@ -35,16 +35,25 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   [[ "$local_sha" == "$ZERO_SHA" ]] && continue
 
   # git bundle needs a ref. Pushing a bare SHA, or a ref that moved since git computed
-  # local_sha, cannot be bundled faithfully: fail closed.
+  # local_sha, cannot be bundled faithfully: fail closed. The ref is compared WITHOUT
+  # peeling: for an annotated tag local_sha is the tag object, not the commit.
   if [[ "$local_ref" != refs/* ]] \
-     || [[ "$(git rev-parse --verify --quiet "${local_ref}^{commit}" || true)" != "$local_sha" ]]; then
+     || [[ "$(git rev-parse --verify --quiet "$local_ref" || true)" != "$local_sha" ]]; then
     echo "[vva-audit] ${local_ref} is not a ref pointing at ${local_sha:0:8}. Push blocked." >&2
     status=1
     continue
   fi
 
+  # The audit range is always commit..commit: peel tags. A ref that does not lead to a
+  # commit (a tag of a tree or blob) has no history to audit: fail closed.
+  if ! local_commit="$(git rev-parse --verify --quiet "${local_sha}^{commit}")"; then
+    echo "[vva-audit] ${local_ref} does not point at a commit. Push blocked." >&2
+    status=1
+    continue
+  fi
+
   if [[ "$remote_sha" == "$ZERO_SHA" ]]; then
-    # New branch on the remote: audit commits not reachable from origin's default branch.
+    # New ref on the remote: audit commits not reachable from origin's default branch.
     # No fallback to the root commit: auditing the whole history exceeds the agent's
     # step budget and would only produce a report without a verdict.
     default_ref="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
@@ -53,21 +62,34 @@ while read -r local_ref local_sha remote_ref remote_sha; do
       status=1
       continue
     fi
-    if ! base="$(git merge-base "$local_sha" "$default_ref")"; then
+    if ! base="$(git merge-base "$local_commit" "$default_ref")"; then
       echo "[vva-audit] no common ancestor with ${default_ref}. Push blocked." >&2
       status=1
       continue
     fi
-    range="${base}..${local_sha}"
   else
     # The remote tip must exist locally, otherwise rev-list fails with an unclear error.
-    if ! git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+    if ! remote_commit="$(git rev-parse --verify --quiet "${remote_sha}^{commit}")"; then
       echo "[vva-audit] remote commit ${remote_sha:0:8} not found locally. Run: git fetch" >&2
       status=1
       continue
     fi
-    range="${remote_sha}..${local_sha}"
+    if git merge-base --is-ancestor "$remote_commit" "$local_commit"; then
+      base="$remote_commit"
+    else
+      # Non-fast-forward (force) push. remote..local would name a base that is not in the
+      # bundle (the wrapper would exit 10 with a misleading message). Audit what this push
+      # adds on top of the common ancestor instead, and say so.
+      if ! base="$(git merge-base "$remote_commit" "$local_commit")"; then
+        echo "[vva-audit] force push to ${remote_ref} shares no history with the remote. Push blocked." >&2
+        status=1
+        continue
+      fi
+      echo "[vva-audit] force push to ${remote_ref}: remote commits after ${base:0:8} will be" \
+        "discarded; auditing only ${base:0:8}..${local_commit:0:8}." >&2
+    fi
   fi
+  range="${base}..${local_commit}"
 
   # Nothing new in this ref.
   [[ -z "$(git rev-list "$range")" ]] && continue

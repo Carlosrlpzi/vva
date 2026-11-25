@@ -8,11 +8,17 @@
 # Install (root-owned, so neither carlosr, opencode-dev nor vva-audit can modify it):
 #   sudo install -o root -g root -m 0755 vva-audit-run /usr/local/bin/vva-audit-run
 #
-# One-time root setup (all root-owned 0755 unless noted):
-#   /etc/vva-audit/opencode/{prompts,commands}   from install/vva-audit/opencode/
-#   /etc/vva-audit/xdg/opencode                  empty; OpenCode mkdirs it at startup
-#   /etc/vva-audit/anthropic.env                 root:vva-audit 0640, ANTHROPIC_API_KEY=<value>
-#   /var/lib/vva-audit/work                      vva-audit:vva-audit 0700
+# One-time root setup (directories root:root 0755, files root:root 0644 unless noted),
+# copied from install/vva-audit/opencode/:
+#   /etc/vva-audit/opencode/opencode.json            auditor-only OpenCode config
+#   /etc/vva-audit/opencode/AGENTS.md                auditor's copy of the project rules
+#   /etc/vva-audit/opencode/prompts/vva-audit.md     auditor prompt
+#   /etc/vva-audit/opencode/commands/audit.md        /audit command
+#   /etc/vva-audit/xdg/opencode                      empty; OpenCode mkdirs it at startup
+#   /etc/vva-audit/anthropic.env                     root:vva-audit 0640, ANTHROPIC_API_KEY=<value>
+#   /var/lib/vva-audit/work                          vva-audit:vva-audit 0700
+# check_etc refuses to run if anything under /etc/vva-audit/{opencode,xdg} is a symlink,
+# not a regular file or directory, not root-owned, or group/other-writable.
 #
 # Trust boundary: everything inside the audited repository is untrusted, including
 # .opencode/, opencode.json, AGENTS.md and prompts/. OpenCode loads project config from
@@ -55,10 +61,12 @@ readonly KEY_FILE="${ETC_DIR}/anthropic.env"
 readonly KEY_NAME="ANTHROPIC_API_KEY"
 readonly SAFE_PATH="/usr/local/bin:/usr/bin:/bin"
 
-# Paths of the audited repo that must never reach OpenCode's config or instruction
-# discovery. CLAUDE.md and .claude/ because OpenCode also reads Claude-compatible
-# instructions and skills; .agents/ as a precaution for skill discovery.
-readonly EXCLUDED_PATHS=(.opencode opencode.json AGENTS.md CLAUDE.md prompts .claude .agents)
+# Names that must never reach OpenCode's config or instruction discovery, at ANY depth of
+# the audited repo (a nested AGENTS.md or .opencode/ is as untrusted as a root one).
+# CLAUDE.md and .claude/ because OpenCode also reads Claude-compatible instructions and
+# skills; CONTEXT.md because it is a deprecated instruction file name; opencode.jsonc is
+# the commented config variant; .agents/ as a precaution for skill discovery.
+readonly EXCLUDED_NAMES=(AGENTS.md CLAUDE.md CONTEXT.md opencode.json opencode.jsonc .opencode .claude .agents prompts)
 
 # Fixed PATH from the start: nothing below depends on the caller's PATH.
 export PATH="$SAFE_PATH"
@@ -127,10 +135,27 @@ resolve_opencode() {
   printf '%s\n' "$bin"
 }
 
+# Fails with exit code $1 if anything inside directory $2 (the directory included) is a
+# symlink, is neither a regular file nor a directory, is not root-owned, or is
+# group/other-writable. check_root_path covers the ancestors; this covers the contents,
+# so a single writable prompt or config file cannot be swapped under a root-owned dir.
+check_root_tree() {
+  local code="$1" dir="$2" bad
+  bad="$(find "$dir" \( -type l -o \( ! -type f ! -type d \) -o ! -user root -o -perm /022 \) \
+    -print -quit)"
+  if [[ -n "$bad" ]]; then
+    die "$code" "${bad} must be a root-owned regular file or directory, not a symlink and not group/other-writable"
+  fi
+}
+
 check_etc() {
   check_root_path 8 "$CONFIG_DIR"
+  check_root_tree 8 "$CONFIG_DIR"
   check_root_path 8 "$XDG_DIR"
+  check_root_tree 8 "$XDG_DIR"
   [[ -r "$KEY_FILE" ]] || die 3 "missing or unreadable ${KEY_FILE}"
+  # realpath in check_root_path would follow a symlink; the key file must be the file itself.
+  [[ ! -L "$KEY_FILE" ]] || die 8 "${KEY_FILE} must not be a symlink"
   check_root_path 8 "$KEY_FILE"
 }
 
@@ -167,16 +192,30 @@ clone_checkout() {
     safe_git -C "$repo" cat-file -e "${sha}^{commit}" 2>/dev/null \
       || die 10 "commit ${sha:0:8} not in bundle"
   done
-  local patterns=('/*')
-  for path in "${EXCLUDED_PATHS[@]}"; do
-    patterns+=("!/${path}" "!/${path}/")
+  # Non-cone patterns follow .gitignore rules: a pattern without a slash (other than a
+  # trailing one) matches at any depth, so "!AGENTS.md" also drops docs/x/AGENTS.md.
+  local patterns=('/*') name
+  for name in "${EXCLUDED_NAMES[@]}"; do
+    patterns+=("!${name}" "!${name}/")
   done
   safe_git -C "$repo" sparse-checkout set --no-cone "${patterns[@]}"
   safe_git -C "$repo" checkout -q --detach "$tip"
-  for path in "${EXCLUDED_PATHS[@]}"; do
-    [[ ! -e "${repo}/${path}" && ! -L "${repo}/${path}" ]] \
-      || die 11 "excluded path present in checkout: ${path}"
+  check_no_excluded "$repo"
+}
+
+# Defence in depth: whatever sparse-checkout did, no excluded name may exist anywhere in
+# the checkout (file, directory or symlink). .git is skipped: it holds objects, not files
+# OpenCode discovers.
+check_no_excluded() {
+  local repo="$1" name found
+  local expr=()
+  for name in "${EXCLUDED_NAMES[@]}"; do
+    expr+=(-o -name "$name")
   done
+  found="$(find "$repo" -path "${repo}/.git" -prune -o \( "${expr[@]:1}" \) -print -quit)"
+  if [[ -n "$found" ]]; then
+    die 11 "excluded path present in checkout: ${found#"${repo}"/}"
+  fi
 }
 
 # Empties the environment (same effect as env -i) and exports only the allowlist.
