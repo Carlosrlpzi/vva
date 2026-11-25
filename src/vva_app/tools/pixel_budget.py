@@ -22,8 +22,10 @@ The focal length in pixels comes from the VERTICAL field of view::
     f_px_v = (frame_height_px / 2) / tan(vfov_deg / 2)
 
 Camera spec sheets usually quote horizontal or diagonal FOV. Convert it to vertical FOV before
-calling this module; passing a horizontal or diagonal value here places the wrong number of
-pixels on the target. The letterbox scale is::
+calling this module: :func:`vfov_from_lens_deg` (lens and sensor height) and
+:func:`vfov_from_hfov_deg` (horizontal FOV with the scene aspect) are the only conversions, so
+the optics stay in one place. Passing a horizontal or diagonal value here places the wrong
+number of pixels on the target. The letterbox scale is::
 
     s = input_size_px / max(frame_width_px, frame_height_px)
 
@@ -202,6 +204,57 @@ def _require_evaluated_night(night: NightBudget) -> None:
         raise ValueError("an uncovered zone must leave night_h_px None")
 
 
+def vfov_from_lens_deg(lens_mm: float, sensor_height_mm: float) -> float:
+    """Return the vertical field of view from focal length and sensor height, in degrees.
+
+    ``2 * atan(sensor_height_mm / (2 * lens_mm))``. This is the ONLY lens-to-FOV conversion
+    in the codebase: the camera profile keeps ``lens_mm`` and ``sensor_height_mm`` and every
+    consumer works with the resulting vertical FOV.
+
+    ``sensor_height_mm`` is the sensor height that maps to the array delivered to letterbox,
+    not necessarily the sensor's physical height. A vertical crop or a digital zoom changes
+    the effective value, so pass the one that describes the delivered array.
+
+    Args:
+        lens_mm: Focal length in millimetres.
+        sensor_height_mm: Sensor height in millimetres that maps to the delivered array.
+
+    Raises:
+        ValueError: If an input is not finite and > 0.
+
+    """
+    lens = _require_positive_finite(lens_mm, "lens_mm")
+    sensor_height = _require_positive_finite(sensor_height_mm, "sensor_height_mm")
+    return 2.0 * math.degrees(math.atan(sensor_height / (2.0 * lens)))
+
+
+def vfov_from_hfov_deg(hfov_deg: float, aspect_w: float, aspect_h: float) -> float:
+    """Return the vertical field of view from a horizontal FOV and the scene aspect ratio.
+
+    For a rectilinear projection, ``tan(vfov/2) = tan(hfov/2) * aspect_h / aspect_w``.
+
+    The aspect ratio MUST be the SCENE (sensor) aspect, for example 16:9, never the pixel
+    dimensions of the delivered array. This installation's 720x576 substream is anamorphic
+    (SAR 64:45): using 576/720 inflates ``tan(vfov/2)`` by about 1.42 and produces a wrong
+    vertical FOV. Use the scene aspect, or correct the array to square pixels first.
+
+    Args:
+        hfov_deg: Horizontal field of view in degrees, strictly between 0 and 180.
+        aspect_w: Scene/sensor width, in the same unit as ``aspect_h``.
+        aspect_h: Scene/sensor height, in the same unit as ``aspect_w``.
+
+    Raises:
+        ValueError: If ``hfov_deg`` is not finite in (0, 180), an aspect is not finite and
+            > 0, or the resulting vertical FOV is not finite in (0, 180).
+
+    """
+    hfov = _require_angle_deg(hfov_deg, "hfov_deg")
+    width = _require_positive_finite(aspect_w, "aspect_w")
+    height = _require_positive_finite(aspect_h, "aspect_h")
+    tan_v_half = math.tan(math.radians(hfov) / 2.0) * height / width
+    return _require_angle_deg(2.0 * math.degrees(math.atan(tan_v_half)), "vfov_deg")
+
+
 def slant_distance_m(
     ground_distance_m: float,
     camera_height_m: float,
@@ -220,15 +273,17 @@ def slant_distance_m(
     Args:
         ground_distance_m: Horizontal ground-plane distance to the target, in metres.
         camera_height_m: Camera mounting height, in metres.
-        target_ref_height_m: Height of the target reference point, in metres.
+        target_ref_height_m: Height of the target reference point, in metres. Zero is
+            valid (the reference point is at ground level).
 
     Raises:
-        ValueError: If any input is not finite and > 0.
+        ValueError: If ``ground_distance_m`` or ``camera_height_m`` is not finite and > 0,
+            or ``target_ref_height_m`` is not finite and >= 0.
 
     """
     ground = _require_positive_finite(ground_distance_m, "ground_distance_m")
     camera = _require_positive_finite(camera_height_m, "camera_height_m")
-    target = _require_positive_finite(target_ref_height_m, "target_ref_height_m")
+    target = _require_non_negative_finite(target_ref_height_m, "target_ref_height_m")
     return math.hypot(ground, camera - target)
 
 
@@ -520,17 +575,39 @@ def _require_positive_finite(value: object, name: str) -> float:
     return number
 
 
-def _require_vfov_deg(value: object) -> float:
-    """Return ``value`` as a finite vertical FOV strictly inside ``(0, 180)`` degrees."""
+def _require_non_negative_finite(value: object, name: str) -> float:
+    """Return ``value`` as a finite ``float`` >= 0, or raise ``ValueError``.
+
+    Strings are rejected outright (no unit parsing), booleans are rejected, and NaN and
+    infinities are rejected so they cannot silently poison a ratio.
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"vfov_deg must be a finite number in (0, 180), got {value!r}")
+        raise ValueError(f"{name} must be a finite number >= 0, got {value!r}")
     try:
         number = float(value)
     except OverflowError as exc:
-        raise ValueError(f"vfov_deg is too large to represent as a float: {value}") from exc
-    if not math.isfinite(number) or not 0.0 < number < 180.0:
-        raise ValueError(f"vfov_deg must be finite and in (0, 180), got {value!r}")
+        raise ValueError(f"{name} is too large to represent as a float: {value}") from exc
+    if not math.isfinite(number) or number < 0.0:
+        raise ValueError(f"{name} must be finite and >= 0, got {value!r}")
     return number
+
+
+def _require_angle_deg(value: object, name: str) -> float:
+    """Return ``value`` as a finite angle strictly inside ``(0, 180)`` degrees."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} must be a finite number in (0, 180), got {value!r}")
+    try:
+        number = float(value)
+    except OverflowError as exc:
+        raise ValueError(f"{name} is too large to represent as a float: {value}") from exc
+    if not math.isfinite(number) or not 0.0 < number < 180.0:
+        raise ValueError(f"{name} must be finite and in (0, 180), got {value!r}")
+    return number
+
+
+def _require_vfov_deg(value: object) -> float:
+    """Return ``value`` as a finite vertical FOV strictly inside ``(0, 180)`` degrees."""
+    return _require_angle_deg(value, "vfov_deg")
 
 
 def _require_positive_result(value: float, name: str) -> float:

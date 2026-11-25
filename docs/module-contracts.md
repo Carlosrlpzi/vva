@@ -148,6 +148,15 @@ Log rows written to JSONL are NOT redefined: import them from
     runs on a substream, pass the substream dimensions as `frame_width_px`/`frame_height_px`.
   - The 640x640 input size is the single constant `MODEL_INPUT_SIZE_PX`, exposed as an
     overridable keyword; the formula is unchanged.
+- Increment implemented 2026-11-25 (Flash): canonical optics and target reference height.
+  - The camera profile supplies `lens_mm` + `sensor_height_mm` (guide §0/§1.19) and
+    `vfov_from_lens_deg(lens_mm, sensor_height_mm)` is the SINGLE lens-to-FOV conversion;
+    `vfov_from_hfov_deg(hfov_deg, aspect_w, aspect_h)` converts a horizontal FOV using the
+    SCENE aspect (16:9), never the delivered array's pixel dimensions (720x576 is
+    anamorphic, SAR 64:45).
+  - `slant_distance_m` now accepts `target_ref_height_m == 0.0` (a target reference at
+    ground level); `ground_distance_m` and `camera_height_m` stay strictly > 0. Negative
+    and non-finite values are still rejected.
 - Pending before M0 can be declared complete (out of this increment):
   - YAML integration and recording values in `configs/cameras/<id>.yaml`.
   - Completing the manual measurement context: vertical FOV of the array fed to letterbox

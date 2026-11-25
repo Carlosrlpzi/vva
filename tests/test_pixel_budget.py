@@ -25,6 +25,8 @@ from vva_app.tools.pixel_budget import (
     night_budget,
     optical_floor_m,
     slant_distance_m,
+    vfov_from_hfov_deg,
+    vfov_from_lens_deg,
 )
 
 FRAME_WIDTH_PX = 720
@@ -75,7 +77,50 @@ def test_vertical_fov_produces_the_expected_focal_length() -> None:
 
 # Guide section 0 worked table: 4.0 mm lens, 3.0 mm sensor height, 1.7 m person, 5 m.
 # tan(vfov/2) = (3.0 / 2) / 4.0 = 0.375: the same optics expressed as vertical FOV.
-GUIDE_VFOV_DEG = 2.0 * math.degrees(math.atan(3.0 / (2.0 * 4.0)))
+GUIDE_VFOV_DEG = vfov_from_lens_deg(4.0, 3.0)
+
+
+# ------------------------------------------------------------------- optics (M1-M2)
+def test_vfov_from_lens_is_the_closed_form() -> None:
+    assert vfov_from_lens_deg(4.0, 3.0) == pytest.approx(2.0 * math.degrees(math.atan(0.375)), rel=0.0, abs=1e-12)
+
+
+@pytest.mark.parametrize("field", ["lens_mm", "sensor_height_mm"])
+@pytest.mark.parametrize("bad", [0.0, -1.0, True, False, math.nan, math.inf, -math.inf, "4", "4 mm", None])
+def test_vfov_from_lens_rejects_invalid_inputs(field: str, bad: object) -> None:
+    kwargs = {"lens_mm": 4.0, "sensor_height_mm": 3.0, field: bad}
+    with pytest.raises(ValueError, match=field):
+        vfov_from_lens_deg(**kwargs)  # type: ignore[arg-type]
+
+
+def test_vfov_from_hfov_is_the_closed_form_for_16_by_9() -> None:
+    assert vfov_from_hfov_deg(90.0, 16.0, 9.0) == pytest.approx(
+        2.0 * math.degrees(math.atan(9.0 / 16.0)), rel=0.0, abs=1e-12
+    )
+
+
+def test_vfov_from_hfov_requires_the_scene_aspect_not_array_pixels() -> None:
+    # 720x576 is an anamorphic 16:9 array (SAR 64:45): 576/720 inflates tan(vfov/2) by 1.42.
+    from_pixels = vfov_from_hfov_deg(90.0, 720.0, 576.0)
+    from_scene = vfov_from_hfov_deg(90.0, 16.0, 9.0)
+    assert from_pixels != pytest.approx(from_scene, rel=1e-9, abs=0.0)
+    assert math.tan(math.radians(from_pixels) / 2.0) / math.tan(math.radians(from_scene) / 2.0) == pytest.approx(
+        64.0 / 45.0, rel=1e-12
+    )
+
+
+@pytest.mark.parametrize("bad", [0.0, 180.0, -1.0, 200.0, True, math.nan, math.inf, "90 deg", None])
+def test_vfov_from_hfov_rejects_invalid_hfov(bad: object) -> None:
+    with pytest.raises(ValueError, match="hfov_deg"):
+        vfov_from_hfov_deg(bad, 16.0, 9.0)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("field", ["aspect_w", "aspect_h"])
+@pytest.mark.parametrize("bad", [0.0, -1.0, True, False, math.nan, math.inf, -math.inf, "16", None])
+def test_vfov_from_hfov_rejects_invalid_aspects(field: str, bad: object) -> None:
+    kwargs = {"hfov_deg": 90.0, "aspect_w": 16.0, "aspect_h": 9.0, field: bad}
+    with pytest.raises(ValueError, match=field):
+        vfov_from_hfov_deg(**kwargs)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(("width", "height"), [(640, 360), (1280, 720)])
@@ -221,6 +266,10 @@ def test_slant_distance_accepts_a_target_above_the_camera() -> None:
     assert slant_distance_m(4.0, 1.0, 3.0) == pytest.approx(math.hypot(4.0, -2.0), rel=1e-12)
 
 
+def test_slant_distance_accepts_a_target_at_ground_level() -> None:
+    assert slant_distance_m(3.0, 4.0, 0.0) == pytest.approx(5.0, rel=0.0, abs=1e-12)
+
+
 # ------------------------------------------------------------- input validation (11)
 @pytest.mark.parametrize(
     "bad_call",
@@ -282,13 +331,19 @@ def test_vfov_rejects_values_outside_the_open_interval(bad: object) -> None:
         model_height_px(**{**GEOMETRY, "vfov_deg": bad}, distance_m=10.0)  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("field", ["ground_distance_m", "camera_height_m", "target_ref_height_m"])
+@pytest.mark.parametrize("field", ["ground_distance_m", "camera_height_m"])
 @pytest.mark.parametrize("bad", [0.0, -1.0, True, math.nan, math.inf, "4 m", None])
 def test_slant_distance_rejects_invalid_arguments(field: str, bad: object) -> None:
     kwargs = {"ground_distance_m": 4.0, "camera_height_m": 3.1, "target_ref_height_m": 0.1}
     kwargs[field] = bad
     with pytest.raises(ValueError, match=field):
         slant_distance_m(**kwargs)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("bad", [-1.0, True, False, math.nan, math.inf, -math.inf, "4 m", None])
+def test_slant_distance_rejects_invalid_target_ref_height(bad: object) -> None:
+    with pytest.raises(ValueError, match="target_ref_height_m"):
+        slant_distance_m(4.0, 3.1, bad)  # type: ignore[arg-type]
 
 
 def test_ir_range_rejects_invalid_values_but_accepts_none() -> None:
