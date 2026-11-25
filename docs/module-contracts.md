@@ -135,8 +135,10 @@ Log rows written to JSONL are NOT redefined: import them from
   night fields null) when IR range is not provided. Frame dimensions are those of the
   array fed to letterbox; focal length uses vertical FOV. All distances are slant
   (line-of-sight) distances — PROVISIONAL convention pending field validation.
-- Invariants: same length units for H and D; letterbox scale = input_size_px / max(W, H_img); focal length from vertical FOV.
-- Required tests: the hand-computable M0 fixture (720x576 frame, vfov = 2*atan(0.5), 640 px input, 1.7 m target, h_min 32 px) reproduced within rounding.
+- Invariants: same length units for H and D; letterbox scale = input_size_px / max(W, H); focal length from vertical FOV.
+- Required tests:
+  - the hand-computable M0 fixture (720x576 frame, vfov = 2*atan(0.5), 640 px input, 1.7 m target, h_min 32 px) reproduced within rounding;
+  - the guide's worked table (4.0 mm, 5 m, 1/3", 640x360 -> ~163 px) reproduced within rounding, with the optics expressed as vertical FOV.
 - Verified by: measured pixel height of a person at the zone boundary (manual), DATASET_AUDIT `box_sizes`.
 - Tier: Flash.
 - Increment implemented 2026-10-13 (Flash): geometric core only, in `src/vva_app/tools/pixel_budget.py`
@@ -148,8 +150,9 @@ Log rows written to JSONL are NOT redefined: import them from
     overridable keyword; the formula is unchanged.
 - Pending before M0 can be declared complete (out of this increment):
   - YAML integration and recording values in `configs/cameras/<id>.yaml`.
-  - Completing the manual measurement context: sensor height, laser error margin, and
-    measurements at several frame positions (centre and periphery).
+  - Completing the manual measurement context: vertical FOV of the array fed to letterbox
+    (measured, or converted from the datasheet's horizontal/diagonal value), laser error
+    margin, and measurements at several frame positions (centre and periphery).
   - Field validation of the PROVISIONAL slant-distance convention: ground distance plus
     mounting height -> camera distance, via `slant_distance_m`.
   - Documented evidence that the substream is the main stream stretched, not a crop (today a

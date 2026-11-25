@@ -1,7 +1,7 @@
 """Geometric pixel budget for one camera zone: model-input height and the night boundary.
 
 Why this module exists
----------------------
+----------------------
 Before any detector code is written, section 0 of the MVP guide asks one question: does the
 model receive enough pixels to see a person at the zone boundary at all? It also asks for the
 nighttime boundary, where IR illuminator range can be the limiting factor rather than the lens
@@ -67,6 +67,13 @@ Limitations (a valid result is not a guarantee)
 -----------------------------------------------
 - This is a geometric estimate. It does not model a person's orientation, occlusion, lens
   distortion, illumination, motion blur or detector accuracy.
+- ``vfov_deg`` must describe the vertical extent of the array as it is handed to letterbox. A
+  vertical crop or a digital zoom changes the effective vertical FOV, so pass the FOV of the
+  delivered array, not the lens's nominal value. Resampling only the width (for example SAR
+  correction from 720x576 to 1024x576) does not change it.
+- Camera tilt is not modelled. The slant distance fixes the line-of-sight length, but a person
+  seen from an elevated camera is foreshortened and may sit off the optical axis, so the real
+  height in pixels can differ from ``h_px``. Whether to model this is pending field validation.
 - The pinhole model ignores barrel distortion. With a wide-angle lens the target size near the
   frame periphery can be overestimated, and this module does not correct it.
 - There is no day/night pixel-height parameter. With identical geometry and preprocessing the

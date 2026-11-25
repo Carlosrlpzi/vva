@@ -73,6 +73,25 @@ def test_vertical_fov_produces_the_expected_focal_length() -> None:
     assert pixel_budget._vertical_focal_px(FRAME_HEIGHT_PX, VFOV_DEG) == pytest.approx(576.0, abs=1e-9)
 
 
+# Guide section 0 worked table: 4.0 mm lens, 3.0 mm sensor height, 1.7 m person, 5 m.
+# tan(vfov/2) = (3.0 / 2) / 4.0 = 0.375: the same optics expressed as vertical FOV.
+GUIDE_VFOV_DEG = 2.0 * math.degrees(math.atan(3.0 / (2.0 * 4.0)))
+
+
+@pytest.mark.parametrize(("width", "height"), [(640, 360), (1280, 720)])
+def test_guide_worked_table_is_reproduced_with_vertical_fov(width: int, height: int) -> None:
+    # Same 16:9 scene at two resolutions: f_px_v doubles and s halves, so h_px is unchanged.
+    h_px = model_height_px(
+        frame_width_px=width,
+        frame_height_px=height,
+        vfov_deg=GUIDE_VFOV_DEG,
+        target_height_m=1.7,
+        distance_m=5.0,
+        input_size_px=INPUT_SIZE_PX,
+    )
+    assert h_px == pytest.approx(163.2, abs=1e-9)
+
+
 # ------------------------------------------------------------------ night boundary (3-8)
 def test_ir_beyond_the_optical_floor_leaves_the_optical_limit() -> None:
     budget = _night(10.0, 30.0)
