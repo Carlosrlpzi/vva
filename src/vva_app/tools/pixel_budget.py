@@ -61,9 +61,17 @@ lives, so it can be revised in one place after experiments.
 Night coverage
 --------------
 Night coverage is expressed only through :class:`NightBudget`. Its boundary is
-``min(optical_floor_m, ir_range_m)`` and its limiting factor records which one won. When the IR
-range is unknown, the night fields are null: the optical floor is never used as a fallback,
+``min(optical_floor_m, ir_range_m)`` and its limiting factor records which one won. When the
+IR range is unknown, the night fields are null: the optical floor is never used as a fallback,
 because that would let a zone claim night coverage without evidence.
+
+Day coverage
+------------
+Day coverage is the day verdict in :class:`PixelBudget`: ``day_covered`` is
+``model_height_px >= h_min_px`` (inclusive, matching the night comparison). ``h_min_px`` is
+owned by ``configs/pixel_budget.yaml`` and read once through
+:func:`load_pixel_budget_config`; the pure calculators take it as a keyword and do no I/O.
+The threshold is echoed in the result so a verdict can be traced to its value.
 
 Limitations (a valid result is not a guarantee)
 -----------------------------------------------
@@ -78,8 +86,9 @@ Limitations (a valid result is not a guarantee)
   height in pixels can differ from ``h_px``. Whether to model this is pending field validation.
 - The pinhole model ignores barrel distortion. With a wide-angle lens the target size near the
   frame periphery can be overestimated, and this module does not correct it.
-- There is no day/night pixel-height parameter. With identical geometry and preprocessing the
-  geometric estimate is identical; the night limit is the separate boundary computed above.
+- There is no separate day/night pixel-height parameter. The same geometric estimate is
+  compared against the configured ``h_min_px`` for the day verdict and against the night
+  boundary above; a day-covered zone is not automatically night-covered.
 """
 
 from __future__ import annotations
@@ -87,10 +96,71 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Final
+
+import yaml
 
 MODEL_INPUT_SIZE_PX: Final[int] = 640
 """Side, in pixels, of the square model input the frame is letterboxed into (guide section 1.3)."""
+
+
+@dataclass(frozen=True)
+class PixelBudgetConfig:
+    """Pixel-budget thresholds read from ``configs/pixel_budget.yaml``.
+
+    Attributes:
+        h_min_px: Minimum acceptable day model-input height in pixels. This is the single
+            owner of the threshold; the pure calculators take it as a keyword and echo it
+            in their result.
+
+    """
+
+    h_min_px: float
+
+    def __post_init__(self) -> None:
+        """Reject a non-finite or non-positive threshold, normalising it to ``float``."""
+        object.__setattr__(self, "h_min_px", _require_positive_finite(self.h_min_px, "h_min_px"))
+
+
+def load_pixel_budget_config(path: Path) -> PixelBudgetConfig:
+    """Read the pixel-budget thresholds from an explicit YAML file.
+
+    ``path`` is required: the pure calculators do no I/O, so callers choose the file (the
+    repository default is ``configs/pixel_budget.yaml``). The document must be a mapping
+    with exactly the key ``h_min_px``. Unknown keys, a missing key, a non-mapping document,
+    an unreadable file and invalid values all fail loud with ``ValueError``.
+
+    Args:
+        path: YAML file to read.
+
+    Raises:
+        ValueError: If the file cannot be read, is not valid YAML, is not a mapping, does
+            not contain exactly ``h_min_px``, or the value is not finite and > 0.
+
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"cannot read pixel budget config {path}: {exc}") from exc
+    try:
+        document = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"invalid YAML in pixel budget config {path}: {exc}") from exc
+    if not isinstance(document, dict):
+        raise ValueError(f"pixel budget config {path} must be a mapping, got {type(document).__name__}")
+    expected = {"h_min_px"}
+    keys = set(document)
+    if keys != expected:
+        unknown = sorted(str(key) for key in keys - expected)
+        missing = sorted(expected - keys)
+        problems: list[str] = []
+        if unknown:
+            problems.append(f"unknown key(s) {', '.join(unknown)}")
+        if missing:
+            problems.append(f"missing key(s) {', '.join(missing)}")
+        raise ValueError(f"pixel budget config {path} must contain exactly h_min_px ({'; '.join(problems)})")
+    return PixelBudgetConfig(h_min_px=document["h_min_px"])
 
 
 class NightLimit(StrEnum):
@@ -154,6 +224,10 @@ class PixelBudget:
         letterbox_scale: Uniform scale applied to the whole frame to fit the model input;
             dimensionless. Padding is not part of it.
         model_height_px: Day model-input height at ``zone_distance_m``, in pixels.
+        h_min_px: Minimum acceptable day model-input height used for the verdict, in pixels;
+            echoed from ``configs/pixel_budget.yaml`` for traceability.
+        day_covered: Whether ``model_height_px >= h_min_px`` (inclusive, matching the night
+            comparison).
         night: Nighttime boundary and its limiting factor for the same zone.
 
     """
@@ -161,13 +235,20 @@ class PixelBudget:
     zone_distance_m: float
     letterbox_scale: float
     model_height_px: float
+    h_min_px: float
+    day_covered: bool
     night: NightBudget
 
     def __post_init__(self) -> None:
-        """Reject non-finite or non-positive day fields on direct construction."""
+        """Reject non-finite day fields or a day verdict inconsistent with the threshold."""
         _require_positive_finite(self.zone_distance_m, "zone_distance_m")
         _require_positive_finite(self.letterbox_scale, "letterbox_scale")
-        _require_positive_finite(self.model_height_px, "model_height_px")
+        model_height = _require_positive_finite(self.model_height_px, "model_height_px")
+        h_min = _require_positive_finite(self.h_min_px, "h_min_px")
+        if not isinstance(self.day_covered, bool):
+            raise ValueError(f"day_covered must be a bool, got {self.day_covered!r}")
+        if self.day_covered is not (model_height >= h_min):
+            raise ValueError("day_covered must equal model_height_px >= h_min_px")
         if not isinstance(self.night, NightBudget):
             raise ValueError(f"night must be a NightBudget, got {self.night!r}")
 
@@ -477,12 +558,14 @@ def compute_pixel_budget(
     ir_range_m: float | None = None,
     input_size_px: int = MODEL_INPUT_SIZE_PX,
 ) -> PixelBudget:
-    """Compose the day model height and the nested night boundary for one zone.
+    """Compose the day verdict, day model height and nested night boundary for one zone.
 
     This is a convenience for callers that want the whole per-zone budget at once. It
     delegates every formula to the pure helpers above, so the numbers cannot drift between
     the two entry points. ``h_min_px`` is required because the optical floor always depends
-    on it.
+    on it; pass ``PixelBudgetConfig.h_min_px`` from ``configs/pixel_budget.yaml``. The
+    threshold is echoed in the result and ``day_covered`` is inclusive
+    (``model_height_px >= h_min_px``).
 
     Args:
         frame_width_px: Width in pixels of the array passed to the letterbox step.
@@ -500,6 +583,7 @@ def compute_pixel_budget(
 
     """
     scale = letterbox_scale(frame_width_px, frame_height_px, input_size_px=input_size_px)
+    minimum = _require_positive_finite(h_min_px, "h_min_px")
     day_height = model_height_px(
         frame_width_px=frame_width_px,
         frame_height_px=frame_height_px,
@@ -513,7 +597,7 @@ def compute_pixel_budget(
         frame_height_px=frame_height_px,
         vfov_deg=vfov_deg,
         target_height_m=target_height_m,
-        h_min_px=h_min_px,
+        h_min_px=minimum,
         zone_distance_m=zone_distance_m,
         ir_range_m=ir_range_m,
         input_size_px=input_size_px,
@@ -522,6 +606,8 @@ def compute_pixel_budget(
         zone_distance_m=zone_distance_m,
         letterbox_scale=scale,
         model_height_px=day_height,
+        h_min_px=minimum,
+        day_covered=day_height >= minimum,
         night=night,
     )
 

@@ -127,15 +127,19 @@ Log rows written to JSONL are NOT redefined: import them from
 ---
 
 ## M0 Pixel budget (§0) - milestone 0
-- Path: `src/vva_app/tools/pixel_budget.py` + values recorded in `configs/cameras/<id>.yaml`.
+- Path: `src/vva_app/tools/pixel_budget.py` + config owner `configs/pixel_budget.yaml` + values recorded in `configs/cameras/<id>.yaml`.
 - Consumes: frame width/height of the array fed to letterbox, vertical FOV, target height H, zone distance D, h_min_px, IR range.
 - Produces, per zone: model-input h_px at the zone boundary (day); the optical floor
-  distance for a given h_min_px; and a night boundary = min(optical floor, IR range)
-  with its limiting factor (optical | ir_range). Night coverage is not evaluated (all
+  distance for a given h_min_px; a day verdict `day_covered = model_height_px >= h_min_px`
+  with the threshold echoed in the result; and a night boundary = min(optical floor, IR
+  range) with its limiting factor (optical | ir_range). Night coverage is not evaluated (all
   night fields null) when IR range is not provided. Frame dimensions are those of the
   array fed to letterbox; focal length uses vertical FOV. All distances are slant
   (line-of-sight) distances — PROVISIONAL convention pending field validation.
-- Invariants: same length units for H and D; letterbox scale = input_size_px / max(W, H); focal length from vertical FOV.
+- Invariants: same length units for H and D; letterbox scale = input_size_px / max(W, H); focal length from vertical FOV; the day comparison is inclusive.
+- Config owner: `configs/pixel_budget.yaml` (owner of `h_min_px`; initial repository value 40,
+  guide §0 "roughly 30-40 px", chosen by the user on 2026-11-25). Read once by
+  `load_pixel_budget_config`; no Python source carries the number as a default.
 - Required tests:
   - the hand-computable M0 fixture (720x576 frame, vfov = 2*atan(0.5), 640 px input, 1.7 m target, h_min 32 px) reproduced within rounding;
   - the guide's worked table (4.0 mm, 5 m, 1/3", 640x360 -> ~163 px) reproduced within rounding, with the optics expressed as vertical FOV.
@@ -157,8 +161,19 @@ Log rows written to JSONL are NOT redefined: import them from
   - `slant_distance_m` now accepts `target_ref_height_m == 0.0` (a target reference at
     ground level); `ground_distance_m` and `camera_height_m` stay strictly > 0. Negative
     and non-finite values are still rejected.
+- Increment implemented 2026-11-25 (Flash): day verdict and single `h_min_px` owner.
+  - `configs/pixel_budget.yaml` owns `h_min_px` (initial 40, guide §0 "roughly 30-40 px",
+    chosen by the user on 2026-11-25); no Python source carries it as a default.
+  - `load_pixel_budget_config(path)` requires an explicit path, reads only `h_min_px`, and
+    fails loud on unknown or missing keys, non-mapping documents, unreadable or invalid YAML,
+    and invalid values.
+  - `PixelBudget` carries `h_min_px` and `day_covered` (`model_height_px >= h_min_px`,
+    inclusive, matching the night comparison); `compute_pixel_budget` fills both and echoes
+    the threshold for traceability.
 - Pending before M0 can be declared complete (out of this increment):
   - YAML integration and recording values in `configs/cameras/<id>.yaml`.
+  - Site-level override of `h_min_px` (§1.19 site layer).
+  - Moving `load_pixel_budget_config` into the config package (C1) when it exists.
   - Completing the manual measurement context: vertical FOV of the array fed to letterbox
     (measured, or converted from the datasheet's horizontal/diagonal value), laser error
     margin, and measurements at several frame positions (centre and periphery).

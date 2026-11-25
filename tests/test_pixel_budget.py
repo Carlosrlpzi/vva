@@ -1,8 +1,8 @@
 """Unit tests for ``vva_app.tools.pixel_budget``.
 
-No camera, Hailo runtime, network, ffmpeg or YAML is used: the module under test is a pure
-calculator. Closed-form values use the hand-computable base fixture in the M0 spec:
-720x576 frame, ``vfov_deg = 2 * atan(0.5)`` (so ``f_px_v = 576``), 640 px input
+The pure calculators use no camera, Hailo runtime, network, ffmpeg or YAML; the config-loader
+tests read temporary YAML files. Closed-form values use the hand-computable base fixture in
+the M0 spec: 720x576 frame, ``vfov_deg = 2 * atan(0.5)`` (so ``f_px_v = 576``), 640 px input
 (``s = 8/9``), 1.7 m target and ``h_min_px = 32``.
 """
 
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -19,8 +20,10 @@ from vva_app.tools.pixel_budget import (
     NightBudget,
     NightLimit,
     PixelBudget,
+    PixelBudgetConfig,
     compute_pixel_budget,
     letterbox_scale,
+    load_pixel_budget_config,
     model_height_px,
     night_budget,
     optical_floor_m,
@@ -182,6 +185,29 @@ def test_unknown_ir_range_is_not_evaluated_and_does_not_fall_back() -> None:
     assert budget.limiting_factor is NightLimit.NOT_EVALUATED
     assert budget.zone_covered is None
     assert budget.night_h_px is None
+
+
+# ---------------------------------------------------------- day verdict and threshold
+def test_day_covered_is_true_when_the_model_height_reaches_the_threshold() -> None:
+    budget = compute_pixel_budget(**GEOMETRY, zone_distance_m=10.0, h_min_px=H_MIN_PX)
+    assert budget.model_height_px == pytest.approx(87.04, abs=1e-9)
+    assert budget.h_min_px == H_MIN_PX
+    assert budget.day_covered is True
+
+
+def test_day_covered_is_false_below_the_threshold() -> None:
+    budget = compute_pixel_budget(**GEOMETRY, zone_distance_m=10.0, h_min_px=100.0)
+    assert budget.model_height_px == pytest.approx(87.04, abs=1e-9)
+    assert budget.h_min_px == 100.0
+    assert budget.day_covered is False
+
+
+def test_day_covered_is_inclusive_at_the_threshold() -> None:
+    day_height = _day_h_px(20.0)
+    budget = compute_pixel_budget(**GEOMETRY, zone_distance_m=20.0, h_min_px=day_height)
+    assert budget.model_height_px == pytest.approx(43.52, abs=1e-9)
+    assert budget.h_min_px == day_height
+    assert budget.day_covered is True
 
 
 # ------------------------------------------------------------------ frame geometry (9)
@@ -394,13 +420,102 @@ def test_pixel_budget_rejects_non_positive_and_invalid_fields() -> None:
             "zone_distance_m": 10.0,
             "letterbox_scale": 1.0,
             "model_height_px": 1.0,
+            "h_min_px": 1.0,
+            "day_covered": True,
             "night": night,
             field: -1.0,
         }
         with pytest.raises(ValueError):
             PixelBudget(**values)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="night"):
-        PixelBudget(zone_distance_m=10.0, letterbox_scale=1.0, model_height_px=1.0, night=object())  # type: ignore[arg-type]
+        PixelBudget(
+            zone_distance_m=10.0,
+            letterbox_scale=1.0,
+            model_height_px=1.0,
+            h_min_px=1.0,
+            day_covered=True,
+            night=object(),  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0, True, False, math.nan, math.inf, "32", None])
+def test_pixel_budget_rejects_invalid_h_min_px(bad: object) -> None:
+    with pytest.raises(ValueError, match="h_min_px"):
+        PixelBudget(
+            zone_distance_m=10.0,
+            letterbox_scale=1.0,
+            model_height_px=50.0,
+            h_min_px=bad,  # type: ignore[arg-type]
+            day_covered=True,
+            night=_night(10.0, 30.0),
+        )
+
+
+def test_pixel_budget_rejects_a_non_bool_day_verdict() -> None:
+    with pytest.raises(ValueError, match="day_covered"):
+        PixelBudget(
+            zone_distance_m=10.0,
+            letterbox_scale=1.0,
+            model_height_px=50.0,
+            h_min_px=H_MIN_PX,
+            day_covered=1,  # type: ignore[arg-type]
+            night=_night(10.0, 30.0),
+        )
+
+
+@pytest.mark.parametrize(
+    ("model_height", "h_min", "day_covered"),
+    [(50.0, 32.0, False), (50.0, 60.0, True)],
+)
+def test_pixel_budget_rejects_an_inconsistent_day_verdict(model_height: float, h_min: float, day_covered: bool) -> None:
+    with pytest.raises(ValueError, match="day_covered"):
+        PixelBudget(
+            zone_distance_m=10.0,
+            letterbox_scale=1.0,
+            model_height_px=model_height,
+            h_min_px=h_min,
+            day_covered=day_covered,
+            night=_night(10.0, 30.0),
+        )
+
+
+# --------------------------------------------------------------------- config loader
+def _write_config(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "pixel_budget.yaml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_load_pixel_budget_config_reads_the_threshold(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, "h_min_px: 32.5\n")
+    assert load_pixel_budget_config(path) == PixelBudgetConfig(h_min_px=32.5)
+
+
+def test_load_pixel_budget_config_rejects_a_missing_key(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="missing"):
+        load_pixel_budget_config(_write_config(tmp_path, "{}\n"))
+
+
+def test_load_pixel_budget_config_rejects_an_unknown_key(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="unknown"):
+        load_pixel_budget_config(_write_config(tmp_path, "h_min_px: 32\nh_max_px: 64\n"))
+
+
+def test_load_pixel_budget_config_rejects_a_non_mapping(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="mapping"):
+        load_pixel_budget_config(_write_config(tmp_path, "- 32\n"))
+
+
+@pytest.mark.parametrize("bad", ["0", "-1", "true", "null", "'32'"])
+def test_load_pixel_budget_config_rejects_invalid_values(tmp_path: Path, bad: str) -> None:
+    with pytest.raises(ValueError, match="h_min_px"):
+        load_pixel_budget_config(_write_config(tmp_path, f"h_min_px: {bad}\n"))
+
+
+def test_shipped_pixel_budget_config_loads() -> None:
+    path = Path(__file__).resolve().parents[1] / "configs" / "pixel_budget.yaml"
+    config = load_pixel_budget_config(path)
+    assert config.h_min_px > 0.0
 
 
 # ------------------------------------------------------------- composition and purity
