@@ -65,19 +65,22 @@ groups opencode-dev
 
 ## 3. Carpeta compartida del proyecto
 
-El repo vivirá en `/srv/pi-vision`, fuera de tu home, compartido por un grupo que incluye a tu usuario y a `opencode-dev`.
+El taller vivirá en `/srv/pi-vision`, fuera de tu home, compartido por el grupo `pivision`. `opencode-dev` es el dueño y escribe en el taller; `carlosr` solo lo lee y nunca ejecuta git ahí.
 
 ```bash
 sudo groupadd pivision
 sudo usermod -aG pivision $USER
 sudo usermod -aG pivision opencode-dev
 
-sudo mkdir -p /srv/pi-vision
-sudo chown $USER:pivision /srv/pi-vision
-sudo chmod 2770 /srv/pi-vision
+sudo install -d -o opencode-dev -g pivision -m 2750 /srv/pi-vision
+
+# Buzones de bundles
+sudo install -d -o root -g pivision -m 0750 /srv/vva-xfer
+sudo install -d -o opencode-dev -g pivision -m 2750 /srv/vva-xfer/to-trusted
+sudo install -d -o carlosr -g pivision -m 2750 /srv/vva-xfer/to-taller
 ```
 
-- `2770`: tú y el grupo leen y escriben, nadie más entra. El `2` (setgid) hace que todo lo nuevo que se cree adentro herede el grupo `pivision`.
+- `2750`: `opencode-dev` lee, escribe y ejecuta; el grupo `pivision` lee y ejecuta; nadie más entra. El `2` (setgid) hace que todo lo nuevo que se cree adentro herede el grupo `pivision`. `carlosr` no escribe en el taller.
 
 **Importante:** cierra sesión y vuelve a entrar (o reinicia) para que tu usuario quede en el grupo nuevo. Verifica con:
 
@@ -85,11 +88,7 @@ sudo chmod 2770 /srv/pi-vision
 groups   # debe incluir pivision
 ```
 
-Para que los archivos nuevos sean editables por ambos usuarios, agrega `umask 002` al final del `~/.bashrc` **de tu usuario** (en Ubuntu esto es seguro porque cada usuario tiene su propio grupo privado):
-
-```bash
-echo 'umask 002' >> ~/.bashrc
-```
+El `umask 002` de `opencode-dev` (ver §5) hace que los archivos nuevos del taller nazcan editables por el grupo; en Ubuntu es seguro porque cada usuario tiene su propio grupo privado.
 
 ---
 
@@ -131,6 +130,33 @@ git config --global user.email "opencode-dev@localhost"
 Ya no hace falta `git config --global --add safe.directory /srv/pi-vision`: el taller pertenece a `opencode-dev`, así que git no ve «dubious ownership», y `carlosr` nunca ejecuta git ahí.
 
 Nota: este usuario **no** tiene llaves SSH ni token de GitHub. Aunque intente `git push`, va a fallar. Esa es la idea.
+
+### Crear el taller desde un bundle
+
+`carlosr`, en `~/src/vva`:
+
+```bash
+git bundle create /srv/vva-xfer/to-taller/trusted.bundle main
+```
+
+`opencode-dev`, en `/srv/pi-vision`:
+
+```bash
+git clone -q /srv/vva-xfer/to-taller/trusted.bundle . -b main
+git remote rename origin trusted
+git config core.sharedRepository group
+```
+
+Esperado: `git remote -v` muestra solo `trusted` apuntando al bundle; `git config --get core.hooksPath` no imprime nada.
+
+Después, en el taller:
+
+```bash
+python3 -m venv .venv --system-site-packages && . .venv/bin/activate && pip install -e ".[dev]"
+npm --prefix .opencode ci
+```
+
+Nota: `pip` puede conservar el Pillow del sistema; si `mypy` reporta `PIL import-untyped`, instala la versión fijada en `uv.lock`.
 
 ---
 
@@ -201,7 +227,7 @@ El auditor anterior corría como `opencode-dev`, el mismo usuario que los agente
 Los directorios son `root:root 0755`; los archivos son `root:root 0644` salvo que se indique otro modo.
 
 - `/etc/vva-audit/opencode/opencode.json`, `/etc/vva-audit/opencode/AGENTS.md`, `/etc/vva-audit/opencode/prompts/vva-audit.md` y `/etc/vva-audit/opencode/commands/audit.md`: copias de `install/vva-audit/opencode/`.
-- `/etc/vva-audit/xdg/opencode`: vacío; debe existir y ser de `root` (si no existe, OpenCode lo crea al arrancar).
+- `/etc/vva-audit/xdg/opencode`: vacío; debe existir y ser de `root`. OpenCode intenta crearlo al arrancar; como `/etc/vva-audit/xdg` es de `root`, ese intento fallaría, así que debe crearse antes como `root`.
 - `/etc/vva-audit/anthropic.env`: `root:vva-audit 0640`, exactamente una línea `ANTHROPIC_API_KEY=<value>`, una llave de Anthropic usada solo por el auditor. Nunca muestres su contenido.
 - `/opt/opencode/1.19.5/opencode`: `root:root 0755`, del release oficial `anomalyco/opencode` v1.19.5, asset `opencode-linux-x64.tar.gz`, sha256 `588310a336fa3b9df36b3f0225b26f679d453efaad0cf3d66c3651ef3ec1647a`; sha256 del binario extraído `7df4e4136301f16589b0f30bf91a61380fca5f8ef22dd36570f5ebe1d4ec802c`.
 - `/usr/local/bin/vva-audit-run`: `root:root 0755`.
@@ -352,10 +378,10 @@ Sal de OpenCode (Ctrl+C) para el siguiente paso.
 
 ## 8. Configurar permisos: `opencode.json`
 
-Este archivo va en la raíz del repo y lo creas y commiteas **tú** (tu usuario, no el agente). Sal de `opencode-dev` con `exit` y, como tu usuario:
+Este archivo va en la raíz del repo de confianza y lo editas, commiteas y pusheas **tú** (`carlosr`), nunca el agente. Hazlo en `~/src/vva`, no en `/srv/pi-vision`:
 
 ```bash
-cd /srv/pi-vision
+cd ~/src/vva
 nano opencode.json
 ```
 
@@ -423,12 +449,24 @@ Contenido (reemplaza `ID-DEL-MODELO` con el ID que anotaste en `/models`):
 
 Recuerda: estas reglas son la **segunda** capa. La primera es que `opencode-dev` físicamente no puede leer tu home ni tiene credenciales.
 
-Commitea el archivo:
+Commitea y pushea el archivo en `~/src/vva`:
 
 ```bash
 git add opencode.json
 git commit -m "Configura permisos de OpenCode"
 git push
+```
+
+Después, llévalo al taller con el flujo `trusted.bundle` de §10:
+
+```bash
+# carlosr, en ~/src/vva
+git bundle create /srv/vva-xfer/to-taller/trusted.bundle main
+```
+
+```bash
+# opencode-dev, en /srv/pi-vision
+git fetch /srv/vva-xfer/to-taller/trusted.bundle main:refs/remotes/trusted/main && git merge --ff-only trusted/main
 ```
 
 ---
