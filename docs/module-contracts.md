@@ -181,6 +181,14 @@ Log rows written to JSONL are NOT redefined: import them from
     implied `h_min_px` from `model_height_px * zone_distance_m / night.optical_floor_m` must
     match within `rel_tol=1e-9`), a day verdict that disagrees with the distance comparison,
     and a covered night paired with an uncovered day.
+- Increment implemented 2026-11-25 (Flash): night-derived consistency checks.
+  - `PixelBudget.__post_init__` also rejects a night computed for another zone distance:
+    `night.zone_covered` must equal `zone_distance_m <= night.boundary_m`, and a covered
+    night's `night_h_px` must match `model_height_px` within `rel_tol=1e-9`.
+  - The implied-threshold error now says "different threshold or geometry" and covers a
+    non-finite (overflowed) implied value.
+  - `day_covered` is documented as the canonical verdict; `model_height_px` is the reported
+    figure and may disagree with `h_min_px` by one ulp exactly at the boundary.
 - Pending before M0 can be declared complete (out of this increment):
   - YAML integration and recording values in `<VVA_SITE_DIR>/cameras/<id>.yaml` (guide §1.19).
   - Site-level override of `h_min_px` (§1.19 site layer).
@@ -188,6 +196,9 @@ Log rows written to JSONL are NOT redefined: import them from
   - Add `configs/pixel_budget.yaml` to the guide's YAML list (§1.18/§1.19, EN and ES)
     together with the C1 work.
   - Raise `ConfigError` instead of `ValueError` once C1 exists.
+  - Normalise `zone_distance_m` and `letterbox_scale` to float in `PixelBudget`.
+  - YAML merge keys (`<<:`) are not supported by the duplicate-key loader (acceptable for a
+    one-key file; revisit in C1).
   - Completing the manual measurement context: vertical FOV of the array fed to letterbox
     (measured, or converted from the datasheet's horizontal/diagonal value), laser error
     margin, and measurements at several frame positions (centre and periphery).

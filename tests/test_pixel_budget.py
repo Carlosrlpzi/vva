@@ -478,6 +478,42 @@ def test_pixel_budget_rejects_a_night_computed_with_another_threshold() -> None:
         )
 
 
+def test_pixel_budget_rejects_a_night_for_another_zone_distance() -> None:
+    # Night computed at 30 m (uncovered; optical floor 27.2 m); the result claims the 10 m zone.
+    night = _night(30.0, 100.0)
+    assert night.zone_covered is False
+    with pytest.raises(ValueError, match=r"night\.zone_covered"):
+        PixelBudget(
+            zone_distance_m=10.0,
+            letterbox_scale=letterbox_scale(FRAME_WIDTH_PX, FRAME_HEIGHT_PX, input_size_px=INPUT_SIZE_PX),
+            model_height_px=_day_h_px(10.0),
+            h_min_px=H_MIN_PX,
+            day_covered=True,
+            night=night,
+        )
+
+
+def test_pixel_budget_rejects_a_covered_night_with_a_mismatched_night_h_px() -> None:
+    floor = _optical_floor()
+    night = NightBudget(
+        optical_floor_m=floor,
+        ir_range_m=30.0,
+        boundary_m=floor,
+        limiting_factor=NightLimit.OPTICAL,
+        zone_covered=True,
+        night_h_px=_day_h_px(10.0) * 2.0,
+    )
+    with pytest.raises(ValueError, match=r"night\.night_h_px"):
+        PixelBudget(
+            zone_distance_m=10.0,
+            letterbox_scale=letterbox_scale(FRAME_WIDTH_PX, FRAME_HEIGHT_PX, input_size_px=INPUT_SIZE_PX),
+            model_height_px=_day_h_px(10.0),
+            h_min_px=H_MIN_PX,
+            day_covered=True,
+            night=night,
+        )
+
+
 def test_pixel_budget_rejects_a_covered_night_with_an_uncovered_day() -> None:
     night = _night(10.0, 30.0)
     assert night.zone_covered is True

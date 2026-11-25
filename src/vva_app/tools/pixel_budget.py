@@ -71,10 +71,12 @@ Day coverage is the day verdict in :class:`PixelBudget`: ``day_covered`` is
 ``zone_distance_m <= night.optical_floor_m``, the same float comparison the night side uses.
 That is mathematically equivalent to ``model_height_px >= h_min_px`` (both descend from the
 same pinhole formula), but comparing distances avoids a one-ulp disagreement between the day
-and night verdicts exactly at the boundary. ``h_min_px`` is owned by
-``configs/pixel_budget.yaml`` and read through :func:`load_pixel_budget_config`; the pure
-calculators take it as a keyword and do no I/O. The threshold is echoed in the result so a
-verdict can be traced to its value.
+and night verdicts exactly at the boundary. ``day_covered`` is the canonical verdict;
+``model_height_px`` is the reported figure and, exactly at the boundary, may differ from
+``h_min_px`` by one ulp in the direction that disagrees with ``day_covered``. ``h_min_px`` is
+owned by ``configs/pixel_budget.yaml`` and read through :func:`load_pixel_budget_config`; the
+pure calculators take it as a keyword and do no I/O. The threshold is echoed in the result so
+a verdict can be traced to its value.
 
 Limitations (a valid result is not a guarantee)
 -----------------------------------------------
@@ -245,6 +247,25 @@ class NightBudget:
         _require_evaluated_night(self)
 
 
+def _require_night_matches_zone(
+    night: NightBudget,
+    zone_distance_m: float,
+    model_height_px: float,
+) -> None:
+    """Reject an evaluated night that describes another zone or another pixel height."""
+    if night.limiting_factor is NightLimit.NOT_EVALUATED:
+        return
+    boundary = night.boundary_m
+    if boundary is None:
+        raise ValueError("night.boundary_m is required when the night is evaluated")
+    if night.zone_covered is not (zone_distance_m <= boundary):
+        raise ValueError("night.zone_covered must equal zone_distance_m <= night.boundary_m")
+    if night.zone_covered is True:
+        night_h_px = night.night_h_px
+        if night_h_px is None or not math.isclose(night_h_px, model_height_px, rel_tol=1e-9, abs_tol=0.0):
+            raise ValueError("night.night_h_px must match model_height_px for a covered zone")
+
+
 @dataclass(frozen=True)
 class PixelBudget:
     """Day model-input height for one zone, with its nested nighttime boundary.
@@ -253,12 +274,15 @@ class PixelBudget:
         zone_distance_m: Slant distance from the camera to the zone boundary, in metres.
         letterbox_scale: Uniform scale applied to the whole frame to fit the model input;
             dimensionless. Padding is not part of it.
-        model_height_px: Day model-input height at ``zone_distance_m``, in pixels.
+        model_height_px: Day model-input height at ``zone_distance_m``, in pixels. This is the
+            reported figure; exactly at the boundary it may differ from ``h_min_px`` by one
+            ulp in the direction that disagrees with ``day_covered``.
         h_min_px: Minimum acceptable day model-input height used for the verdict, in pixels;
             echoed from ``configs/pixel_budget.yaml`` for traceability.
         day_covered: Whether ``zone_distance_m <= night.optical_floor_m`` (inclusive, the
             same comparison the night side uses). Mathematically equivalent to
-            ``model_height_px >= h_min_px``; see the module docstring.
+            ``model_height_px >= h_min_px``; this is the canonical verdict, see the module
+            docstring.
         night: Nighttime boundary and its limiting factor for the same zone.
 
     """
@@ -285,11 +309,13 @@ class PixelBudget:
         # threshold from the pinhole relation h_px = C / distance, floor = C / h_min (C is the
         # same geometry), so a result cannot pair a day threshold with a night for another.
         implied_h_min = model_height * self.zone_distance_m / self.night.optical_floor_m
-        if not math.isclose(implied_h_min, h_min, rel_tol=1e-9, abs_tol=0.0):
+        if not math.isfinite(implied_h_min) or not math.isclose(implied_h_min, h_min, rel_tol=1e-9, abs_tol=0.0):
             raise ValueError(
-                "night.optical_floor_m was computed with a different threshold: "
+                "night.optical_floor_m was computed with a different threshold or geometry: "
                 f"implied h_min_px {implied_h_min!r} != {h_min!r}"
             )
+        # The night must describe this zone, not another one with the same threshold.
+        _require_night_matches_zone(self.night, self.zone_distance_m, model_height)
         # A covered night can never coexist with an uncovered day: the night boundary never
         # exceeds the optical floor. Check it explicitly so a future change cannot pair them.
         if self.night.zone_covered is True and self.day_covered is False:
