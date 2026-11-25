@@ -131,8 +131,10 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 
   # The owner's merge rule (2026-11-25): nothing ships with an open CRITICAL or HIGH
   # finding, even under APPROVE_WITH_CHANGES. Findings start with "[SEVERITY] title" at the
-  # beginning of a line (auditor prompt, section 5).
-  blocking="$(grep -cE '^\[(CRITICAL|HIGH)\]' "$report" || true)"
+  # beginning of a line (auditor prompt, section 5), but the model sometimes wraps them in
+  # markdown (**[HIGH]**, ### [HIGH], - [HIGH], > [HIGH], indentation, `[HIGH]`). Those
+  # prefixes are accepted too: a badly formatted quote that blocks is the fail-closed side.
+  blocking="$(grep -cE '^[[:space:]#>*_`-]*\[(CRITICAL|HIGH)\]' "$report" || true)"
 
   case "$verdict" in
     "VERDICT: APPROVE"|"VERDICT: APPROVE_WITH_CHANGES")

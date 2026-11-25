@@ -28,7 +28,6 @@ ROOT = Path(__file__).resolve().parents[1]
 HOOK = ROOT / ".githooks" / "pre-push"
 WRAPPER = ROOT / "install" / "vva-audit-run"
 REVIEW = ROOT / "install" / "vva-review-bundle"
-INSTALLED_WRAPPER = Path("/usr/local/bin/vva-audit-run")
 ZERO = "0" * 40
 
 pytestmark = pytest.mark.skipif(
@@ -147,8 +146,26 @@ def test_verdict_and_blocking_severities(hook: HookEnv, report: str, code: int) 
     assert result.returncode == code, result.stderr
 
 
-def test_a_quoted_high_tag_not_at_line_start_does_not_block(hook: HookEnv) -> None:
-    hook.set_report("Summary mentions `[HIGH]` only in passing.\n  [HIGH] indented quote\nVERDICT: APPROVE")
+@pytest.mark.parametrize(
+    "line",
+    [
+        "**[HIGH]** bold",
+        "### [HIGH] heading",
+        "- [CRITICAL] list item",
+        "  [HIGH] indented",
+        "> [HIGH] quote",
+        "`[HIGH]` x",
+    ],
+)
+def test_markdown_wrapped_blocking_severities_still_block(hook: HookEnv, line: str) -> None:
+    hook.set_report(f"{line}\nVERDICT: APPROVE_WITH_CHANGES")
+    result = hook.push(f"refs/heads/main {hook.c3} refs/heads/main {hook.c1}")
+    assert result.returncode == 1, result.stderr
+    assert "CRITICAL/HIGH" in result.stderr
+
+
+def test_a_severity_mentioned_mid_sentence_does_not_block(hook: HookEnv) -> None:
+    hook.set_report("Summary mentions [HIGH] only in passing.\n**[MEDIUM]** x\nVERDICT: APPROVE_WITH_CHANGES")
     result = hook.push(f"refs/heads/main {hook.c3} refs/heads/main {hook.c1}")
     assert result.returncode == 0, result.stderr
 
@@ -315,28 +332,108 @@ def test_review_refuses_to_run_outside_home_before_running_git(tmp_path: Path) -
     assert "trusted repository" in result.stderr
 
 
-@pytest.mark.skipif(not INSTALLED_WRAPPER.is_file(), reason="needs the installed /usr/local/bin/vva-audit-run")
-def test_review_flags_protected_paths_and_passes_clean_ones(tmp_path: Path) -> None:
-    home = tmp_path / "home"
-    trusted = home / "vva"
-    trusted.mkdir(parents=True)
-    _git(trusted, "init", "-q", "-b", "main")
-    _commit(trusted, "keep.py")
-    taller = tmp_path / "taller"
-    subprocess.run(["git", "clone", "-q", str(trusted), str(taller)], check=True)
-    _git(taller, "switch", "-q", "-c", "clean")
-    _commit(taller, "src/ok.py")
-    _git(taller, "switch", "-q", "-c", "dirty")
-    _commit(taller, "src/app/AGENTS.md")
-    clean = tmp_path / "clean.bundle"
-    dirty = tmp_path / "dirty.bundle"
-    _git(taller, "bundle", "create", "-q", str(clean), "main..clean")
-    _git(taller, "bundle", "create", "-q", str(dirty), "main..dirty")
+class ReviewEnv:
+    """A trusted repository under a fake HOME and a taller clone that produces bundles."""
 
-    ok = _review(trusted, home, str(clean))
-    assert ok.returncode == 0, ok.stderr
-    assert "ok: no protected path changed" in ok.stdout
+    def __init__(self, tmp_path: Path) -> None:
+        self.tmp = tmp_path
+        self.home = tmp_path / "home"
+        self.trusted = self.home / "vva"
+        self.trusted.mkdir(parents=True)
+        _git(self.trusted, "init", "-q", "-b", "main")
+        _commit(self.trusted, "keep.py")
+        self.taller = tmp_path / "taller"
+        subprocess.run(["git", "clone", "-q", str(self.trusted), str(self.taller)], check=True)
 
-    flagged = _review(trusted, home, str(dirty))
-    assert flagged.returncode == 1, flagged.stderr
-    assert "src/app/AGENTS.md" in flagged.stdout
+    def bundle(self, branch: str, *files: str) -> Path:
+        _git(self.taller, "switch", "-q", "-c", branch, "main")
+        for name in files:
+            _commit(self.taller, name)
+        path = self.tmp / f"{branch}.bundle"
+        _git(self.taller, "bundle", "create", "-q", str(path), f"main..{branch}")
+        return path
+
+    def review(self, bundle: Path, wrapper: Path = WRAPPER) -> subprocess.CompletedProcess[str]:
+        # Sourced, so the wrapper under test is this commit's install/vva-audit-run (or a
+        # synthetic one), not whatever happens to be installed in /usr/local/bin.
+        env = {**os.environ, "HOME": str(self.home), "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
+        return subprocess.run(
+            ["bash", "-c", f'source "{REVIEW}"; review "{wrapper}" "{bundle}"'],
+            cwd=self.trusted,
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+
+
+@pytest.fixture
+def rev(tmp_path: Path) -> ReviewEnv:
+    return ReviewEnv(tmp_path)
+
+
+def test_review_passes_a_clean_branch(rev: ReviewEnv) -> None:
+    result = rev.review(rev.bundle("clean", "src/ok.py", "src/app/prompts/vlm.md"))
+    assert result.returncode == 0, result.stderr
+    assert "ok: no protected path changed" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/app/AGENTS.md",
+        "AGENTS.md",
+        "opencode.json",
+        "x/opencode.json",
+        "b/opencode.jsonc",
+        "x/.opencode/agents/evil.md",
+        "docs/CLAUDE.md",
+        "prompts/p.md",
+        "install/vva-audit-run",
+        ".githooks/pre-push",
+        "docs/guia-opencode-ubuntu.md",
+        "docs/security-decisions.md",
+        "tests/test_audit_tools.py",
+    ],
+)
+def test_review_flags_protected_paths(rev: ReviewEnv, path: str) -> None:
+    result = rev.review(rev.bundle("dirty", "src/ok.py", path))
+    assert result.returncode == 1, result.stderr
+    assert path in result.stdout
+
+
+def test_review_reports_refs_that_are_not_branches(rev: ReviewEnv) -> None:
+    _git(rev.taller, "switch", "-q", "-c", "work", "main")
+    _commit(rev.taller, "src/ok.py")
+    _git(rev.taller, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "v1", "-m", "v1")
+    bundle = rev.tmp / "all.bundle"
+    _git(rev.taller, "bundle", "create", "-q", str(bundle), "main..work", "refs/tags/v1")
+    result = rev.review(bundle)
+    assert result.returncode == 1, result.stderr
+    assert "refs/tags/v1" in result.stdout
+
+
+def test_review_rejects_a_bundle_without_branches(rev: ReviewEnv) -> None:
+    _git(rev.taller, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "v1", "-m", "v1")
+    bundle = rev.tmp / "tags.bundle"
+    _git(rev.taller, "bundle", "create", "-q", str(bundle), "refs/tags/v1")
+    assert rev.review(bundle).returncode == 4
+
+
+@pytest.mark.parametrize(
+    "wrapper_text",
+    [
+        None,  # no wrapper at all
+        "readonly EXCLUDED_ROOT_NAMES=(prompts)\n",  # no EXCLUDED_NAMES
+        "readonly EXCLUDED_NAMES=(CLAUDE.md)\nreadonly EXCLUDED_ROOT_NAMES=(prompts)\n",  # AGENTS.md missing
+        "readonly EXCLUDED_NAMES=(AGENTS.md opencode.json .opencode)\n",  # no EXCLUDED_ROOT_NAMES
+        "readonly EXCLUDED_NAMES=(AGENTS.md opencode.json .opencode *)\nreadonly EXCLUDED_ROOT_NAMES=(prompts)\n",
+    ],
+)
+def test_review_fails_closed_when_the_wrapper_lists_cannot_be_read(rev: ReviewEnv, wrapper_text: str | None) -> None:
+    wrapper = rev.tmp / "fake-vva-audit-run"
+    if wrapper_text is not None:
+        wrapper.write_text("#!/bin/bash\n" + wrapper_text, encoding="utf-8")
+    result = rev.review(rev.bundle("dirty", "src/app/AGENTS.md"), wrapper=wrapper)
+    assert result.returncode == 5, result.stdout + result.stderr
+    assert "ok: no protected path changed" not in result.stdout

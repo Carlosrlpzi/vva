@@ -188,7 +188,11 @@ Si `/srv/pi-vision` ya existe como clon de GitHub de `carlosr` (diseño anterior
    git status --porcelain --ignored > /srv/vva-xfer/to-trusted/migracion-status.txt   # sin seguimiento e ignorados
    exit
    ```
-   Como `carlosr`, en `~/src/vva`: `vva-review-bundle /srv/vva-xfer/to-trusted/migracion.bundle` (ver «Buzones»). Los `.patch` y el `.txt` se leen como datos; nunca se aplican sin revisarlos. Lo que `migracion-status.txt` marque como sin seguimiento (`??`) o ignorado (`!!`) y quieras conservar, cópialo con `cp` en el paso 3.
+   Como `carlosr`, en `~/src/vva`: `vva-review-bundle /srv/vva-xfer/to-trusted/migracion.bundle` (ver «Buzones»). El script solo importa ramas y lista los tags y el stash que **no** importó (sale con 1); tráelos a mano a refs aparte, sin checkout:
+   ```bash
+   git fetch /srv/vva-xfer/to-trusted/migracion.bundle 'refs/tags/*:refs/taller/tags/*' 'refs/stash:refs/taller/stash'
+   ```
+   Los `.patch` y el `.txt` se leen como datos; nunca se aplican sin revisarlos. Lo que `migracion-status.txt` marque como sin seguimiento (`??`) o ignorado (`!!`) y quieras conservar, cópialo con `cp` en el paso 3.
 2. Retirar el auditor viejo: borrar `/usr/local/lib/vva/hooks` y reemplazar `/etc/sudoers.d/vva-audit` con la regla nueva. Las llaves que el auditor viejo guardaba en el home de `opencode-dev` (o que estuvieron en su `auth.json`) hay que **revocarlas en la consola del proveedor**, no solo borrarlas: estuvieron al alcance del usuario auditado. La excepción es una llave que `opencode-dev` ya usa por diseño (compruébalo comparando huellas sha256, nunca los valores). El auditor nuevo usa siempre una llave nueva y exclusiva. No hace falta tocar la config de git del taller viejo: se retira completo en el paso 4.
 3. Sacar del taller lo que no va en git, con `mv` o `cp`, nunca con git: `.env` va a `~/src/vva/.env` (de `carlosr`, `0600`); los informes viejos de `.vva/audits/` se copian a `~/src/vva/.vva/audits/`.
 4. Mover el taller viejo: `sudo mv /srv/pi-vision /srv/pi-vision.old`, y crear el nuevo con §3 y «Crear el taller desde un bundle».
@@ -350,7 +354,7 @@ git merge --ff-only taller/<branch>
 git push
 ```
 
-`vva-review-bundle` (instalado por `root` en `/usr/local/bin`) verifica el bundle, lo trae a `refs/remotes/taller/*` sin hacer checkout ni merge, y lista cualquier ruta protegida que cambió: los nombres de configuración de agentes (los lee de `EXCLUDED_NAMES` del wrapper **instalado**, así las dos listas no se desalinean) y los archivos del dueño (`prompts`, `tests/test_skills_consistency.py`, `tests/test_audit_tools.py`, `install`, `.githooks`, `docs/guia-opencode-ubuntu.md`, `docs/security-decisions.md`). Sale con 1 si encontró alguna; se niega a correr fuera de tu home, antes de ejecutar git. El `git diff` es la revisión estática; las pruebas las corre `opencode-dev`, nunca `carlosr`. El `git push` lo audita el hook.
+`vva-review-bundle` (instalado por `root` en `/usr/local/bin`) verifica el bundle, lo trae a `refs/remotes/taller/*` sin hacer checkout ni merge, y lista cualquier ruta protegida que cambió: los nombres de configuración de agentes (los lee de `EXCLUDED_NAMES` y `EXCLUDED_ROOT_NAMES` del wrapper **instalado**, así las listas no se desalinean) y los archivos del dueño (`tests/test_skills_consistency.py`, `tests/test_audit_tools.py`, `install`, `.githooks`, `docs/guia-opencode-ubuntu.md`, `docs/security-decisions.md`). Falla cerrado: sale con 5 si no puede leer esas listas, con 4 si el bundle es inválido o no trae ramas, y con 1 si cambió alguna ruta protegida o el bundle trae refs que no son ramas (tags, stash), que lista sin importar. Se niega a correr fuera de tu home, antes de ejecutar git. El `git diff` es la revisión estática; las pruebas las corre `opencode-dev`, nunca `carlosr`. El `git push` lo audita el hook.
 
 **Repo de confianza -> taller.** `carlosr` ejecuta en `~/src/vva`:
 
@@ -637,7 +641,7 @@ Ciclo por cada funcionalidad:
 4. En `~/src/vva`, `carlosr` pasa la comprobación determinista y revisa el diff de forma estática. El auditor es un LLM y no debe ser el único control:
    ```bash
    vva-review-bundle /srv/vva-xfer/to-trusted/<name>.bundle
-   # Esperado: "ok: no protected path changed" y exit 0 por cada rama del bundle.
+   # Esperado: "ok: no protected path changed" en cada rama y, al final, exit 0.
    git diff main...taller/<branch>
    ```
    Si `vva-review-bundle` lista una ruta protegida (exit 1), no hagas merge: un cambio a esos archivos (configuración de agentes, auditor, esta guía, decisiones de seguridad) lo redacta y lo commitea `carlosr` en `~/src/vva`, nunca el builder.

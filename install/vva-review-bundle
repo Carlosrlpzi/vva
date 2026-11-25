@@ -11,21 +11,26 @@
 #
 # For every branch in the bundle it prints the commits and the diffstat against <base>, and
 # lists any changed path that belongs to the owner or configures an agent:
-#   - the names in EXCLUDED_NAMES of the INSTALLED /usr/local/bin/vva-audit-run, at any depth
-#     (read from that file, so this list and the auditor's exclusions cannot drift apart);
+#   - EXCLUDED_NAMES (any depth) and EXCLUDED_ROOT_NAMES (root only) of the INSTALLED
+#     /usr/local/bin/vva-audit-run, read from that file so this list and the auditor's
+#     exclusions cannot drift apart;
 #   - the owner-only paths in OWNER_PATHS below, from the repository root.
+# Refs that are not branches (tags, refs/stash) are listed, not imported: handle them by hand.
 #
-# Exit codes: 0 nothing protected changed; 1 a protected path changed (review it by hand,
-# it is not necessarily wrong); 2 usage; 3 not run from a trusted checkout; 4 bundle invalid;
-# 5 cannot read the protected names from the installed wrapper.
+# Fails closed. Exit codes: 0 every branch is clean and there is nothing else in the bundle;
+# 1 a protected path changed, or the bundle carries refs that are not branches (review by
+# hand; not necessarily wrong); 2 usage; 3 not run from a trusted checkout; 4 bundle invalid
+# or without branches; 5 the protected names cannot be read from the installed wrapper.
 
 set -euo pipefail
 
 readonly WRAPPER="/usr/local/bin/vva-audit-run"
 # Owner-only paths that are not agent-config names: changes here are drafted and committed
 # by carlosr, never by the builder (docs/guia-opencode-ubuntu.md, "Rutina de trabajo").
-readonly OWNER_PATHS=(prompts tests/test_skills_consistency.py tests/test_audit_tools.py install .githooks
+readonly OWNER_PATHS=(tests/test_skills_consistency.py tests/test_audit_tools.py install .githooks
   docs/guia-opencode-ubuntu.md docs/security-decisions.md)
+# Sanity check on what was read: the wrapper's list must at least protect these.
+readonly REQUIRED_NAMES=(AGENTS.md opencode.json .opencode)
 
 die() {
   local code="$1"
@@ -34,37 +39,76 @@ die() {
   exit "$code"
 }
 
-# Prints the names of EXCLUDED_NAMES from the installed wrapper, one per line, and fails if
-# the line is missing or a name contains anything but a safe file-name character.
-read_excluded_names() {
-  local line names name
-  [[ -f "$WRAPPER" && ! -L "$WRAPPER" ]] || die 5 "${WRAPPER} missing or a symlink"
-  line="$(grep -E '^readonly EXCLUDED_NAMES=\(.*\)$' "$WRAPPER" || true)"
-  [[ -n "$line" ]] || die 5 "EXCLUDED_NAMES not found in ${WRAPPER}"
-  names="${line#*\(}"
-  names="${names%\)}"
-  for name in $names; do
-    [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || die 5 "unexpected name in EXCLUDED_NAMES: ${name}"
-    printf '%s\n' "$name"
+# Prints the words of the one-line bash array "readonly <var>=(...)" in <wrapper>, one per
+# line. Fails (exit 5) if the line is missing or duplicated, or a word is not a plain file
+# name. Called through a command substitution whose status the caller checks.
+read_array() {
+  local wrapper="$1" var="$2" line body word words=()
+  [[ -f "$wrapper" && ! -L "$wrapper" ]] || die 5 "${wrapper} missing or a symlink"
+  line="$(grep -E "^readonly ${var}=\(.*\)\$" "$wrapper" || true)"
+  [[ -n "$line" && "$line" != *$'\n'* ]] || die 5 "exactly one 'readonly ${var}=(...)' line expected in ${wrapper}"
+  body="${line#*\(}"
+  body="${body%\)}"
+  # read -a splits on whitespace without pathname expansion.
+  read -r -a words <<< "$body"
+  for word in "${words[@]}"; do
+    [[ "$word" =~ ^[A-Za-z0-9._-]+$ ]] || die 5 "unexpected name in ${var}: ${word}"
+    printf '%s\n' "$word"
   done
 }
 
-main() {
-  local bundle="${1:-}" base="${2:-main}" top head ref names name hits=0
-  [[ -n "$bundle" && $# -le 2 ]] || die 2 "usage: vva-review-bundle <bundle> [<base>]"
-  [[ -f "$bundle" && ! -L "$bundle" ]] || die 2 "${bundle} is not a regular file"
+# Builds the pathspecs into the global array SPECS, failing closed if the wrapper's lists
+# cannot be read or look wrong.
+build_specs() {
+  local wrapper="$1" raw name required found
+  local -a names root_names
+  raw="$(read_array "$wrapper" EXCLUDED_NAMES)" || exit $?
+  mapfile -t names <<< "$raw"
+  for required in "${REQUIRED_NAMES[@]}"; do
+    found=0
+    for name in "${names[@]}"; do
+      if [[ "$name" == "$required" ]]; then
+        found=1
+      fi
+    done
+    ((found)) || die 5 "EXCLUDED_NAMES in ${wrapper} does not contain ${required}"
+  done
+  raw="$(read_array "$wrapper" EXCLUDED_ROOT_NAMES)" || exit $?
+  mapfile -t root_names <<< "$raw"
+  SPECS=()
+  for name in "${names[@]}"; do
+    SPECS+=(":(top,glob)**/${name}" ":(top,glob)**/${name}/**")
+  done
+  for name in "${root_names[@]}" "${OWNER_PATHS[@]}"; do
+    if [[ -n "$name" ]]; then
+      SPECS+=(":(top)${name}")
+    fi
+  done
+}
+
+# Commit metadata is written by the builder: strip control characters (keep tab/newline)
+# before it reaches the terminal, so it cannot inject escape sequences.
+sanitize() {
+  LC_ALL=C tr -d '\000-\010\013-\037\177'
+}
+
+# The whole review, with the wrapper path as a parameter so tests can pass a synthetic one.
+review() {
+  local wrapper="$1" bundle="${2:-}" base="${3:-main}"
+  [[ -n "$bundle" && $# -le 3 ]] || die 2 "usage: vva-review-bundle <bundle> [<base>]"
 
   # Decide where we are BEFORE running any git command: git reads the repository's own
   # config and hooks, so it must never start inside a directory the audited side could
   # write (the taller, an old taller, a mailbox). Allowlist, not blocklist: the trusted
   # repository lives in the caller's home, which no other user can write.
-  local here home
+  local here home top
   here="$(realpath -e -- "$PWD")" || die 3 "cannot resolve the current directory"
   home="$(realpath -e -- "$HOME")" || die 3 "cannot resolve HOME"
   case "$here/" in
     "$home"/*) ;;
     *) die 3 "run it inside the trusted repository under ${home}, not in ${here}" ;;
   esac
+  [[ -f "$bundle" && ! -L "$bundle" ]] || die 2 "${bundle} is not a regular file"
   top="$(git rev-parse --show-toplevel 2>/dev/null)" || die 3 "run it inside the trusted repository"
   case "$(realpath -e -- "$top")/" in
     "$home"/*) ;;
@@ -72,37 +116,52 @@ main() {
   esac
   git rev-parse --verify --quiet "${base}^{commit}" >/dev/null || die 2 "unknown base: ${base}"
 
-  mapfile -t names < <(read_excluded_names)
-  local specs=()
-  for name in "${names[@]}"; do
-    specs+=(":(top,glob)**/${name}" ":(top,glob)**/${name}/**")
-  done
-  for name in "${OWNER_PATHS[@]}"; do
-    specs+=(":(top)${name}")
-  done
+  build_specs "$wrapper"
 
   git bundle verify -q "$bundle" >/dev/null 2>&1 || die 4 "git bundle verify rejected ${bundle}"
+  local heads
+  heads="$(git bundle list-heads "$bundle")" || die 4 "cannot list the refs of ${bundle}"
+
+  local -a branches=() others=()
+  local ref
+  while read -r _ ref; do
+    [[ -n "$ref" ]] || continue
+    if [[ "$ref" == refs/heads/* ]]; then
+      branches+=("$ref")
+    else
+      others+=("$ref")
+    fi
+  done <<< "$heads"
+  ((${#branches[@]} > 0)) || die 4 "${bundle} contains no branch (refs/heads/*)"
+
   # Remote-tracking refs only: nothing is checked out, merged or executed.
   git fetch -q "$bundle" '+refs/heads/*:refs/remotes/taller/*' || die 4 "git fetch from ${bundle} failed"
 
-  while read -r _ ref; do
-    [[ "$ref" == refs/heads/* ]] || continue
+  local hits=0 head changed
+  for ref in "${branches[@]}"; do
     head="refs/remotes/taller/${ref#refs/heads/}"
     echo "=== ${ref#refs/heads/}  (${base}...${head#refs/remotes/})"
-    git log --format='%h %an %s' "${base}..${head}"
-    git diff --stat "${base}...${head}"
-    local changed
-    changed="$(git diff --name-only "${base}...${head}" -- "${specs[@]}")"
+    git log --format='%h %an %s' "${base}..${head}" | sanitize
+    git diff --stat "${base}...${head}" | sanitize
+    changed="$(git diff --name-only "${base}...${head}" -- "${SPECS[@]}")"
     if [[ -n "$changed" ]]; then
       echo "!!! protected paths changed (owner-only or agent config):"
-      sed 's/^/    /' <<< "$changed"
+      sed 's/^/    /' <<< "$changed" | sanitize
       hits=1
     else
       echo "ok: no protected path changed"
     fi
-  done < <(git bundle list-heads "$bundle")
-
-  exit "$hits"
+  done
+  if ((${#others[@]} > 0)); then
+    echo "!!! refs that are not branches were NOT imported (handle them by hand):"
+    printf '    %s\n' "${others[@]}" | sanitize
+    hits=1
+  fi
+  return "$hits"
 }
 
-main "$@"
+# Run only when executed; tests/test_audit_tools.py sources this file to call review with a
+# synthetic wrapper.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  review "$WRAPPER" "$@"
+fi

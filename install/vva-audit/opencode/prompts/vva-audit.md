@@ -157,9 +157,11 @@ Severities:
 - **MEDIUM** — maintainability, missing tests on a critical path, unclear design.
 - **LOW** — style, naming, minor clarity issues. Group these; do not list them one by one.
 
-Any line that starts with `[CRITICAL]` or `[HIGH]` blocks the push, whatever your verdict. So
-use those severities only for findings that meet the definitions above, and never start any
-other line of the report (quotes, summaries, questions) with `[CRITICAL]` or `[HIGH]`.
+Any line that starts with `[CRITICAL]` or `[HIGH]` blocks the push, whatever your verdict,
+also when it is preceded only by markdown markers (spaces, `#`, `>`, `*`, `_`, `-`, a
+backtick). So use those severities only for findings that meet the definitions above, write
+each finding's first line as plain `[SEVERITY] title`, and never start any other line of the
+report (quotes, summaries, questions) with `[CRITICAL]` or `[HIGH]`; mention them mid-sentence.
 
 End with:
 - **Not verified:** what you could not check and why (no test run, API not resolvable, out of scope).
