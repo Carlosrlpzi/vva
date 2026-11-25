@@ -158,10 +158,12 @@ Severities:
 - **LOW** — style, naming, minor clarity issues. Group these; do not list them one by one.
 
 Any line that starts with `[CRITICAL]` or `[HIGH]` blocks the push, whatever your verdict,
-also when it is preceded only by markdown markers (spaces, `#`, `>`, `*`, `_`, `-`, a
-backtick). So use those severities only for findings that meet the definitions above, write
-each finding's first line as plain `[SEVERITY] title`, and never start any other line of the
-report (quotes, summaries, questions) with `[CRITICAL]` or `[HIGH]`; mention them mid-sentence.
+also when it is preceded only by markdown markers (spaces, `#`, `>`, `*`, `_`, `-`, `|`, a
+list number, a backtick), in any letter case, and for the Spanish labels `[CRÍTICO]`/`[ALTA]`.
+Write severity labels in English, exactly `[CRITICAL]`, `[HIGH]`, `[MEDIUM]` or `[LOW]`, as the
+first thing on each finding's first line. Never start any other line of the report (quotes,
+summaries, questions) with a blocking label; mention it mid-sentence instead. Never lower a
+severity to avoid blocking: blocking a push with a real CRITICAL or HIGH is the intended outcome.
 
 End with:
 - **Not verified:** what you could not check and why (no test run, API not resolvable, out of scope).

@@ -48,6 +48,11 @@ def _git(cwd: Path, *args: str) -> str:
     return out.stdout.strip()
 
 
+def _clone(*args: str | Path) -> None:
+    env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
+    subprocess.run(["git", "clone", "-q", *map(str, args)], check=True, capture_output=True, env=env)
+
+
 def _commit(repo: Path, name: str, text: str = "x\n") -> str:
     path = repo / name
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -69,9 +74,9 @@ class HookEnv:
         self.c2 = _commit(seed, "b.txt")
         self.c3 = _commit(seed, "c.txt")
         remote = tmp_path / "remote.git"
-        subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(remote)], check=True)
+        _clone("--bare", seed, remote)
         self.work = tmp_path / "work"
-        subprocess.run(["git", "clone", "-q", str(remote), str(self.work)], check=True)
+        _clone(remote, self.work)
         _git(self.work, "remote", "set-head", "origin", "main")
         bindir = tmp_path / "bin"
         bindir.mkdir()
@@ -155,6 +160,13 @@ def test_verdict_and_blocking_severities(hook: HookEnv, report: str, code: int) 
         "  [HIGH] indented",
         "> [HIGH] quote",
         "`[HIGH]` x",
+        "1. [HIGH] numbered",
+        "2) [CRITICAL] numbered",
+        "| [HIGH] | table row |",
+        "[High] mixed case",
+        "[ALTA] Spanish label",
+        "[CRÍTICO] Spanish label",
+        "[crítica] lower case",
     ],
 )
 def test_markdown_wrapped_blocking_severities_still_block(hook: HookEnv, line: str) -> None:
@@ -165,7 +177,8 @@ def test_markdown_wrapped_blocking_severities_still_block(hook: HookEnv, line: s
 
 
 def test_a_severity_mentioned_mid_sentence_does_not_block(hook: HookEnv) -> None:
-    hook.set_report("Summary mentions [HIGH] only in passing.\n**[MEDIUM]** x\nVERDICT: APPROVE_WITH_CHANGES")
+    report = "Summary mentions [HIGH] only in passing.\n**[MEDIUM]** x\n| [MEDIUM] | y |\n[ALTERNATIVA] z"
+    hook.set_report(f"{report}\nVERDICT: APPROVE_WITH_CHANGES")
     result = hook.push(f"refs/heads/main {hook.c3} refs/heads/main {hook.c1}")
     assert result.returncode == 0, result.stderr
 
@@ -343,7 +356,7 @@ class ReviewEnv:
         _git(self.trusted, "init", "-q", "-b", "main")
         _commit(self.trusted, "keep.py")
         self.taller = tmp_path / "taller"
-        subprocess.run(["git", "clone", "-q", str(self.trusted), str(self.taller)], check=True)
+        _clone(self.trusted, self.taller)
 
     def bundle(self, branch: str, *files: str) -> Path:
         _git(self.taller, "switch", "-q", "-c", branch, "main")
@@ -353,12 +366,12 @@ class ReviewEnv:
         _git(self.taller, "bundle", "create", "-q", str(path), f"main..{branch}")
         return path
 
-    def review(self, bundle: Path, wrapper: Path = WRAPPER) -> subprocess.CompletedProcess[str]:
+    def review(self, bundle: Path, wrapper: Path = WRAPPER, base: str = "main") -> subprocess.CompletedProcess[str]:
         # Sourced, so the wrapper under test is this commit's install/vva-audit-run (or a
         # synthetic one), not whatever happens to be installed in /usr/local/bin.
         env = {**os.environ, "HOME": str(self.home), "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
         return subprocess.run(
-            ["bash", "-c", f'source "{REVIEW}"; review "{wrapper}" "{bundle}"'],
+            ["bash", "-c", f'source "{REVIEW}"; review "{wrapper}" "{bundle}" "{base}"'],
             cwd=self.trusted,
             capture_output=True,
             text=True,
@@ -394,6 +407,9 @@ def test_review_passes_a_clean_branch(rev: ReviewEnv) -> None:
         "docs/guia-opencode-ubuntu.md",
         "docs/security-decisions.md",
         "tests/test_audit_tools.py",
+        ".gitattributes",
+        "src/app/.gitattributes",
+        ".gitmodules",
     ],
 )
 def test_review_flags_protected_paths(rev: ReviewEnv, path: str) -> None:
@@ -411,6 +427,37 @@ def test_review_reports_refs_that_are_not_branches(rev: ReviewEnv) -> None:
     result = rev.review(bundle)
     assert result.returncode == 1, result.stderr
     assert "refs/tags/v1" in result.stdout
+    assert _git(rev.trusted, "tag", "--list") == ""  # listed, never imported
+
+
+def test_review_ignores_a_smuggled_tag_named_like_the_base(rev: ReviewEnv) -> None:
+    # The builder adds a protected file in C1, an innocent C2, and a tag "main" on C1: if the
+    # tag reached the trusted repo, "main" would resolve to C1 and hide AGENTS.md.
+    _git(rev.taller, "switch", "-q", "-c", "x", "main")
+    c1 = _commit(rev.taller, "src/app/AGENTS.md")
+    _commit(rev.taller, "src/ok.py")
+    _git(rev.taller, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "main", "-m", "evil", c1)
+    bundle = rev.tmp / "smuggled.bundle"
+    _git(rev.taller, "bundle", "create", "-q", str(bundle), "refs/heads/main..refs/heads/x", "refs/tags/main")
+    result = rev.review(bundle)
+    assert result.returncode == 1, result.stderr
+    assert "src/app/AGENTS.md" in result.stdout
+    assert "refs/tags/main" in result.stdout
+    assert _git(rev.trusted, "tag", "--list") == ""
+
+
+def test_review_lists_head_of_an_all_bundle_as_not_imported(rev: ReviewEnv) -> None:
+    _git(rev.taller, "switch", "-q", "-c", "work", "main")
+    _commit(rev.taller, "src/ok.py")
+    bundle = rev.tmp / "all.bundle"
+    _git(rev.taller, "bundle", "create", "-q", str(bundle), "--all")
+    result = rev.review(bundle)
+    assert result.returncode == 1, result.stderr
+    assert "HEAD" in result.stdout.split("NOT imported", 1)[-1]
+
+
+def test_review_rejects_an_unknown_base(rev: ReviewEnv) -> None:
+    assert rev.review(rev.bundle("clean", "src/ok.py"), base="nope").returncode == 2
 
 
 def test_review_rejects_a_bundle_without_branches(rev: ReviewEnv) -> None:

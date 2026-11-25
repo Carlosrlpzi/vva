@@ -190,7 +190,8 @@ Si `/srv/pi-vision` ya existe como clon de GitHub de `carlosr` (diseño anterior
    ```
    Como `carlosr`, en `~/src/vva`: `vva-review-bundle /srv/vva-xfer/to-trusted/migracion.bundle` (ver «Buzones»). El script solo importa ramas y lista los tags y el stash que **no** importó (sale con 1); tráelos a mano a refs aparte, sin checkout:
    ```bash
-   git fetch /srv/vva-xfer/to-trusted/migracion.bundle 'refs/tags/*:refs/taller/tags/*' 'refs/stash:refs/taller/stash'
+   git fetch --no-tags /srv/vva-xfer/to-trusted/migracion.bundle 'refs/tags/*:refs/taller/tags/*'
+   git fetch --no-tags /srv/vva-xfer/to-trusted/migracion.bundle 'refs/stash:refs/taller/stash'   # solo si el script listó refs/stash
    ```
    Los `.patch` y el `.txt` se leen como datos; nunca se aplican sin revisarlos. Lo que `migracion-status.txt` marque como sin seguimiento (`??`) o ignorado (`!!`) y quieras conservar, cópialo con `cp` en el paso 3.
 2. Retirar el auditor viejo: borrar `/usr/local/lib/vva/hooks` y reemplazar `/etc/sudoers.d/vva-audit` con la regla nueva. Las llaves que el auditor viejo guardaba en el home de `opencode-dev` (o que estuvieron en su `auth.json`) hay que **revocarlas en la consola del proveedor**, no solo borrarlas: estuvieron al alcance del usuario auditado. La excepción es una llave que `opencode-dev` ya usa por diseño (compruébalo comparando huellas sha256, nunca los valores). El auditor nuevo usa siempre una llave nueva y exclusiva. No hace falta tocar la config de git del taller viejo: se retira completo en el paso 4.

@@ -19,8 +19,11 @@
 #
 # Fails closed. Exit codes: 0 every branch is clean and there is nothing else in the bundle;
 # 1 a protected path changed, or the bundle carries refs that are not branches (review by
-# hand; not necessarily wrong); 2 usage; 3 not run from a trusted checkout; 4 bundle invalid
-# or without branches; 5 the protected names cannot be read from the installed wrapper.
+# hand; not necessarily wrong); 2 usage or unknown base; 3 not run from a trusted checkout;
+# 4 bundle invalid or without branches, or a git command failed; 5 the protected names
+# cannot be read from the installed wrapper. Any other code (bash/git killed) is also a failure.
+# Tags in the bundle are never fetched (--no-tags) and the base is resolved to a SHA from
+# refs/heads/ before the fetch, so a smuggled refs/tags/main cannot move it.
 
 set -euo pipefail
 
@@ -29,6 +32,10 @@ readonly WRAPPER="/usr/local/bin/vva-audit-run"
 # by carlosr, never by the builder (docs/guia-opencode-ubuntu.md, "Rutina de trabajo").
 readonly OWNER_PATHS=(tests/test_skills_consistency.py tests/test_audit_tools.py install .githooks
   docs/guia-opencode-ubuntu.md docs/security-decisions.md)
+# Git metadata files that change how git shows or fetches content (for example
+# `.gitattributes` with `-diff` hides a file's diff from the reviewer and the auditor), at
+# any depth. Owner-only as well.
+readonly GIT_META_NAMES=(.gitattributes .gitmodules)
 # Sanity check on what was read: the wrapper's list must at least protect these.
 readonly REQUIRED_NAMES=(AGENTS.md opencode.json .opencode)
 
@@ -76,7 +83,7 @@ build_specs() {
   raw="$(read_array "$wrapper" EXCLUDED_ROOT_NAMES)" || exit $?
   mapfile -t root_names <<< "$raw"
   SPECS=()
-  for name in "${names[@]}"; do
+  for name in "${names[@]}" "${GIT_META_NAMES[@]}"; do
     SPECS+=(":(top,glob)**/${name}" ":(top,glob)**/${name}/**")
   done
   for name in "${root_names[@]}" "${OWNER_PATHS[@]}"; do
@@ -86,10 +93,11 @@ build_specs() {
   done
 }
 
-# Commit metadata is written by the builder: strip control characters (keep tab/newline)
-# before it reaches the terminal, so it cannot inject escape sequences.
+# Commit metadata is written by the builder: strip control characters before it reaches the
+# terminal, so it cannot inject escape sequences. C0 and DEL (keeping tab and newline), and
+# C1 controls U+0080-U+009F encoded in UTF-8 (0xC2 0x80-0x9F; e.g. CSI is U+009B).
 sanitize() {
-  LC_ALL=C tr -d '\000-\010\013-\037\177'
+  LC_ALL=C tr -d '\000-\010\013-\037\177' | LC_ALL=C sed -e 's/\xc2[\x80-\x9f]//g'
 }
 
 # The whole review, with the wrapper path as a parameter so tests can pass a synthetic one.
@@ -114,7 +122,17 @@ review() {
     "$home"/*) ;;
     *) die 3 "the repository root ${top} is outside ${home}" ;;
   esac
-  git rev-parse --verify --quiet "${base}^{commit}" >/dev/null || die 2 "unknown base: ${base}"
+  # Resolve the base to a SHA once, from refs/heads/ explicitly (or a literal commit id),
+  # BEFORE anything from the bundle reaches the repository: an unqualified name could later
+  # resolve to a tag the builder smuggled in (refs/tags/main wins over refs/heads/main).
+  local base_sha
+  if base_sha="$(git rev-parse --verify --quiet "refs/heads/${base}^{commit}")"; then
+    :
+  elif [[ "$base" =~ ^[0-9a-f]{7,40}$ ]] && base_sha="$(git rev-parse --verify --quiet "${base}^{commit}")"; then
+    :
+  else
+    die 2 "unknown base: ${base} (a local branch or a commit id)"
+  fi
 
   build_specs "$wrapper"
 
@@ -134,16 +152,18 @@ review() {
   done <<< "$heads"
   ((${#branches[@]} > 0)) || die 4 "${bundle} contains no branch (refs/heads/*)"
 
-  # Remote-tracking refs only: nothing is checked out, merged or executed.
-  git fetch -q "$bundle" '+refs/heads/*:refs/remotes/taller/*' || die 4 "git fetch from ${bundle} failed"
+  # Remote-tracking refs only: nothing is checked out, merged or executed. --no-tags: a
+  # fetch with a refspec would otherwise auto-follow the bundle's tags into refs/tags/.
+  git fetch -q --no-tags "$bundle" '+refs/heads/*:refs/remotes/taller/*' \
+    || die 4 "git fetch from ${bundle} failed"
 
   local hits=0 head changed
   for ref in "${branches[@]}"; do
     head="refs/remotes/taller/${ref#refs/heads/}"
-    echo "=== ${ref#refs/heads/}  (${base}...${head#refs/remotes/})"
-    git log --format='%h %an %s' "${base}..${head}" | sanitize
-    git diff --stat "${base}...${head}" | sanitize
-    changed="$(git diff --name-only "${base}...${head}" -- "${SPECS[@]}")"
+    echo "=== ${ref#refs/heads/}  (${base} ${base_sha:0:8}...${head#refs/remotes/})"
+    git log --format='%h %an %s' "${base_sha}..${head}" | sanitize || die 4 "git log failed"
+    git diff --stat "${base_sha}...${head}" | sanitize || die 4 "git diff failed"
+    changed="$(git diff --name-only "${base_sha}...${head}" -- "${SPECS[@]}")" || die 4 "git diff failed"
     if [[ -n "$changed" ]]; then
       echo "!!! protected paths changed (owner-only or agent config):"
       sed 's/^/    /' <<< "$changed" | sanitize
