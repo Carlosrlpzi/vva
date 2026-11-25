@@ -46,6 +46,9 @@ copy a secret, key, token or credential into this file; refer to it by commit an
 - **Tests:** `tests/test_audit_tools.py` covers the hook, the wrapper's checkout and `/etc`
   checks, and the review script, with temporary repositories and a fake `sudo` (no root).
   It is owner-only, like `install/` and `.githooks/`. It runs in the taller as
-  `opencode-dev`, so `tests/conftest.py` and `pyproject.toml` are owner-only too: a builder
-  change there could make it pass regardless, and `vva-review-bundle` flags it.
+  `opencode-dev`, so the pytest configuration (`conftest.py` at any depth, `pyproject.toml`,
+  `pytest.ini`, `tox.ini`, `setup.cfg`) is owner-only too and `vva-review-bundle` flags it.
+  Limit: the builder still controls the taller's whole environment (`.venv`, site-packages),
+  so a green run there is evidence, not proof; the proof for a change to these tools is the
+  owner's own review of the diff.
 - **Pending:** GitHub branch protection on `main` (owner, repository settings).

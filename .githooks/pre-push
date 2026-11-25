@@ -148,7 +148,12 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   findings_ok=0
   if [[ "$findings" =~ ^FINDINGS:\ critical=([0-9]+)\ high=([0-9]+)\ medium=([0-9]+)\ low=([0-9]+)$ ]]; then
     findings_ok=1
-    findings_blocking=$((10#${BASH_REMATCH[1]} + 10#${BASH_REMATCH[2]}))
+    # Compare as strings, not integers: bash arithmetic is 64-bit and wraps silently, so a
+    # huge count could sum to 0. "Zero" means only zeros; anything else blocks.
+    findings_blocking=1
+    if [[ "${BASH_REMATCH[1]}" =~ ^0+$ && "${BASH_REMATCH[2]}" =~ ^0+$ ]]; then
+      findings_blocking=0
+    fi
   fi
 
   case "$verdict" in

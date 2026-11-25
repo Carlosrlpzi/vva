@@ -155,6 +155,9 @@ def _findings(critical: int = 0, high: int = 0, medium: int = 0, low: int = 0) -
         (f"{CLEAN}\nsome text\nVERDICT: APPROVE", 1),
         # FINDINGS alone blocks, even with no tagged finding line...
         (f"{_findings(high=1)}\nVERDICT: APPROVE_WITH_CHANGES", 1),
+        # Counts are compared as strings: a huge count must not wrap around to zero.
+        ("FINDINGS: critical=18446744073709551615 high=1 medium=0 low=0\nVERDICT: APPROVE", 1),
+        ("FINDINGS: critical=00 high=000 medium=0 low=0\nVERDICT: APPROVE", 0),
         # ...and the tag regex is still a safety net if FINDINGS undercounts.
         (f"[HIGH] x\n{CLEAN}\nVERDICT: APPROVE_WITH_CHANGES", 1),
     ],
@@ -380,10 +383,14 @@ class ReviewEnv:
         _git(self.taller, "bundle", "create", "-q", str(path), f"main..{branch}")
         return path
 
-    def review(self, bundle: Path, wrapper: Path = WRAPPER, base: str = "main") -> subprocess.CompletedProcess[str]:
+    def review(
+        self, bundle: Path, wrapper: Path = WRAPPER, base: str = "main", path_prefix: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
         # Sourced, so the wrapper under test is this commit's install/vva-audit-run (or a
         # synthetic one), not whatever happens to be installed in /usr/local/bin.
         env = {**os.environ, "HOME": str(self.home), "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
+        if path_prefix is not None:
+            env["PATH"] = f"{path_prefix}:{env['PATH']}"
         return subprocess.run(
             ["bash", "-c", f'source "{REVIEW}"; review "{wrapper}" "{bundle}" "{base}"'],
             cwd=self.trusted,
@@ -425,7 +432,12 @@ def test_review_passes_a_clean_branch(rev: ReviewEnv) -> None:
         "src/app/.gitattributes",
         ".gitmodules",
         "tests/conftest.py",
+        "conftest.py",
+        "src/app/conftest.py",
         "pyproject.toml",
+        "pytest.ini",
+        "tox.ini",
+        "setup.cfg",
     ],
 )
 def test_review_flags_protected_paths(rev: ReviewEnv, path: str) -> None:
@@ -491,6 +503,20 @@ def test_review_reads_a_private_copy_and_leaves_the_mailbox_untouched(rev: Revie
     assert result.returncode == 0, result.stderr
     assert bundle.read_bytes() == before
     assert "in.bundle" not in result.stdout + result.stderr
+
+
+def test_review_rejects_a_copy_that_is_not_a_regular_file(rev: ReviewEnv) -> None:
+    # Simulates the builder swapping the mailbox file for a symlink right before the copy:
+    # cp -P would then copy the symlink itself. A fake cp produces exactly that result.
+    bindir = rev.tmp / "fakebin"
+    bindir.mkdir()
+    fake_cp = bindir / "cp"
+    fake_cp.write_text('#!/bin/bash\nln -s "${@: -2:1}" "${@: -1}"\n', encoding="utf-8")
+    fake_cp.chmod(0o755)
+    result = rev.review(rev.bundle("clean", "src/ok.py"), path_prefix=bindir)
+    assert result.returncode == 4, result.stdout + result.stderr
+    assert "changed type" in result.stderr
+    assert _git(rev.trusted, "for-each-ref", "refs/remotes/taller") == ""
 
 
 def test_review_rejects_a_bundle_without_branches(rev: ReviewEnv) -> None:

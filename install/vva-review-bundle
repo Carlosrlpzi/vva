@@ -33,14 +33,15 @@ set -euo pipefail
 readonly WRAPPER="/usr/local/bin/vva-audit-run"
 # Owner-only paths that are not agent-config names: changes here are drafted and committed
 # by carlosr, never by the builder (docs/guia-opencode-ubuntu.md, "Rutina de trabajo").
-# tests/conftest.py and pyproject.toml because they can change how pytest runs the owner's
-# tests in the taller (autouse fixtures, plugins, addopts), making them pass regardless.
-readonly OWNER_PATHS=(tests/test_skills_consistency.py tests/test_audit_tools.py tests/conftest.py
-  pyproject.toml install .githooks docs/guia-opencode-ubuntu.md docs/security-decisions.md)
-# Git metadata files that change how git shows or fetches content (for example
-# `.gitattributes` with `-diff` hides a file's diff from the reviewer and the auditor), at
-# any depth. Owner-only as well.
-readonly GIT_META_NAMES=(.gitattributes .gitmodules)
+# The root pytest config files (pyproject.toml, pytest.ini, tox.ini, setup.cfg) because they
+# can change how pytest runs the owner's tests in the taller (plugins, addopts, -k).
+readonly OWNER_PATHS=(tests/test_skills_consistency.py tests/test_audit_tools.py
+  pyproject.toml pytest.ini tox.ini setup.cfg
+  install .githooks docs/guia-opencode-ubuntu.md docs/security-decisions.md)
+# Files that change how git shows content (`.gitattributes` with `-diff` hides a file's diff
+# from the reviewer and the auditor), how it fetches (`.gitmodules`), or how pytest runs the
+# tests (`conftest.py`: autouse fixtures, hooks), at any depth. Owner-only as well.
+readonly GIT_META_NAMES=(.gitattributes .gitmodules conftest.py)
 # Sanity check on what was read: the wrapper's list must at least protect these.
 readonly REQUIRED_NAMES=(AGENTS.md opencode.json .opencode)
 
@@ -158,6 +159,11 @@ review() {
   # shellcheck disable=SC2064  # expand now: $private is local
   trap "rm -rf -- '${private}'" EXIT
   cp --no-dereference -- "$bundle" "${private}/in.bundle" || die 4 "cannot copy ${bundle}"
+  # The earlier regular-file check ran on the mailbox, which can change under us; check the
+  # copy, which lives in our own 0700 directory and is stable. cp -P copies a symlink as a
+  # symlink, so a swap to a symlink (or FIFO) right before the copy is caught here.
+  [[ -f "${private}/in.bundle" && ! -L "${private}/in.bundle" ]] \
+    || die 4 "the bundle changed type while it was being copied"
   bundle="${private}/in.bundle"
 
   git bundle verify -q "$bundle" >/dev/null 2>&1 || die 4 "git bundle verify rejected the bundle"
