@@ -86,7 +86,8 @@ while read -r local_ref local_sha remote_ref remote_sha; do
       # --no-verify. Decision of the user, 2026-11-25.
       if [[ "$remote_ref" == "refs/heads/${default_ref#origin/}" ]]; then
         echo "[vva-audit] non-fast-forward push to the default branch ${remote_ref} is not allowed." \
-          "Push blocked. If it is deliberate: VVA_AUDIT=0 git push --force ..." >&2
+          "Push blocked. If it is deliberate, push only that ref:" \
+          "VVA_AUDIT=0 git push --force origin ${local_ref}:${remote_ref}" >&2
         status=1
         continue
       fi
