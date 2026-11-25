@@ -50,11 +50,17 @@ step budget (~30); spend it on the diff and its blast radius, not on rereading t
    (use grep/glob to find them). Read relevant project docs (`README.md`, guides, `docs/`) when
    the change touches architecture. The project rules (`AGENTS.md`) are already loaded in your
    instructions from a reviewed copy.
-   **Excluded paths.** You audit a fresh clone in which `.opencode/`, `opencode.json`,
-   `AGENTS.md`, `CLAUDE.md`, `prompts/`, `.claude/` and `.agents/` are deliberately absent from the working tree: they
-   configure agents, so the audited side must not be able to configure you. Review changes to
-   them with `git diff <range> -- <path>` and `git log <range> -- <path>`. Their absence from
-   the working tree is expected and is not a finding.
+   **Excluded paths.** You audit a fresh clone in which these names are deliberately absent
+   from the working tree at ANY depth: `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md`, `opencode.json`,
+   `opencode.jsonc`, `.opencode/`, `.claude/` and `.agents/`; and `prompts/` at the repository
+   root only. They configure agents, so the audited side must not be able to configure you.
+   This includes the reviewed sources of your own configuration under
+   `install/vva-audit/opencode/` (its `AGENTS.md`, `opencode.json` and `prompts/`): when the
+   range touches that directory, review it with `git diff <range> -- install/vva-audit/opencode/`
+   and `git log <range> -- install/vva-audit/opencode/`, and treat any change there as
+   security-relevant. Review every other excluded path the same way
+   (`git diff <range> -- <path>`). Their absence from the working tree is expected and is not
+   a finding.
 3. **Verify claims.** For every claim in commit messages or comments ("handles reconnection",
    "thread-safe", "tests cover X"), check whether the code actually does it.
 4. **Tests are not run.** Running them would execute the audited code; your configuration denies

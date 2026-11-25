@@ -66,7 +66,12 @@ readonly SAFE_PATH="/usr/local/bin:/usr/bin:/bin"
 # CLAUDE.md and .claude/ because OpenCode also reads Claude-compatible instructions and
 # skills; CONTEXT.md because it is a deprecated instruction file name; opencode.jsonc is
 # the commented config variant; .agents/ as a precaution for skill discovery.
-readonly EXCLUDED_NAMES=(AGENTS.md CLAUDE.md CONTEXT.md opencode.json opencode.jsonc .opencode .claude .agents prompts)
+readonly EXCLUDED_NAMES=(AGENTS.md CLAUDE.md CONTEXT.md opencode.json opencode.jsonc .opencode .claude .agents)
+# Excluded at the repository ROOT only. OpenCode does not discover a prompts/ directory by
+# name; the root one is excluded because the project's opencode.json loads it through
+# {file:...}. A nested prompts/ (for example application prompts under src/) is ordinary
+# code the auditor must see.
+readonly EXCLUDED_ROOT_NAMES=(prompts)
 
 # Fixed PATH from the start: nothing below depends on the caller's PATH.
 export PATH="$SAFE_PATH"
@@ -141,8 +146,10 @@ resolve_opencode() {
 # so a single writable prompt or config file cannot be swapped under a root-owned dir.
 check_root_tree() {
   local code="$1" dir="$2" bad
+  # A find error (e.g. an unreadable subdirectory) must map to this check's exit code,
+  # not to find's own status under set -e.
   bad="$(find "$dir" \( -type l -o \( ! -type f ! -type d \) -o ! -user root -o -perm /022 \) \
-    -print -quit)"
+    -print -quit)" || die "$code" "cannot inspect ${dir}"
   if [[ -n "$bad" ]]; then
     die "$code" "${bad} must be a root-owned regular file or directory, not a symlink and not group/other-writable"
   fi
@@ -186,7 +193,7 @@ receive_bundle() {
 # Clones without checkout, checks both SHAs, then checks out the range's tip with the
 # excluded paths left out by sparse-checkout (so `git status` stays clean).
 clone_checkout() {
-  local bundle="$1" repo="$2" base="$3" tip="$4" sha path
+  local bundle="$1" repo="$2" base="$3" tip="$4" sha
   safe_git clone -q --no-checkout "$bundle" "$repo" || die 9 "invalid bundle (git clone rejected it)"
   for sha in "$base" "$tip"; do
     safe_git -C "$repo" cat-file -e "${sha}^{commit}" 2>/dev/null \
@@ -198,24 +205,33 @@ clone_checkout() {
   for name in "${EXCLUDED_NAMES[@]}"; do
     patterns+=("!${name}" "!${name}/")
   done
+  for name in "${EXCLUDED_ROOT_NAMES[@]}"; do
+    patterns+=("!/${name}" "!/${name}/")
+  done
   safe_git -C "$repo" sparse-checkout set --no-cone "${patterns[@]}"
   safe_git -C "$repo" checkout -q --detach "$tip"
   check_no_excluded "$repo"
 }
 
 # Defence in depth: whatever sparse-checkout did, no excluded name may exist anywhere in
-# the checkout (file, directory or symlink). .git is skipped: it holds objects, not files
-# OpenCode discovers.
+# the checkout, and no root-only name at the root (file, directory or symlink). .git is
+# skipped: it holds objects, not files OpenCode discovers.
 check_no_excluded() {
   local repo="$1" name found
   local expr=()
   for name in "${EXCLUDED_NAMES[@]}"; do
     expr+=(-o -name "$name")
   done
-  found="$(find "$repo" -path "${repo}/.git" -prune -o \( "${expr[@]:1}" \) -print -quit)"
+  found="$(find "$repo" -path "${repo}/.git" -prune -o \( "${expr[@]:1}" \) -print -quit)" \
+    || die 11 "cannot inspect checkout"
   if [[ -n "$found" ]]; then
     die 11 "excluded path present in checkout: ${found#"${repo}"/}"
   fi
+  for name in "${EXCLUDED_ROOT_NAMES[@]}"; do
+    if [[ -e "${repo}/${name}" || -L "${repo}/${name}" ]]; then
+      die 11 "excluded path present in checkout: ${name}"
+    fi
+  done
 }
 
 # Empties the environment (same effect as env -i) and exports only the allowlist.

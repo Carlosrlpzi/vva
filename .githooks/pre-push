@@ -52,16 +52,19 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     continue
   fi
 
+  # origin's default branch: the base for new refs, and the branch that never accepts a
+  # non-fast-forward push. Unresolvable means we cannot apply either rule: fail closed.
+  default_ref="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+  if [[ -z "$default_ref" ]]; then
+    echo "[vva-audit] cannot resolve origin's default branch. Run: git remote set-head origin -a" >&2
+    status=1
+    continue
+  fi
+
   if [[ "$remote_sha" == "$ZERO_SHA" ]]; then
     # New ref on the remote: audit commits not reachable from origin's default branch.
     # No fallback to the root commit: auditing the whole history exceeds the agent's
     # step budget and would only produce a report without a verdict.
-    default_ref="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
-    if [[ -z "$default_ref" ]]; then
-      echo "[vva-audit] cannot resolve origin's default branch. Run: git remote set-head origin -a" >&2
-      status=1
-      continue
-    fi
     if ! base="$(git merge-base "$local_commit" "$default_ref")"; then
       echo "[vva-audit] no common ancestor with ${default_ref}. Push blocked." >&2
       status=1
@@ -77,22 +80,35 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     if git merge-base --is-ancestor "$remote_commit" "$local_commit"; then
       base="$remote_commit"
     else
-      # Non-fast-forward (force) push. remote..local would name a base that is not in the
-      # bundle (the wrapper would exit 10 with a misleading message). Audit what this push
-      # adds on top of the common ancestor instead, and say so.
+      # Non-fast-forward (force) push, including a pure rewind. On the default branch it
+      # would discard reviewed history (for example a security fix) without any audit of
+      # what is lost, so it is always blocked; doing it on purpose needs VVA_AUDIT=0 or
+      # --no-verify. Decision of the user, 2026-11-25.
+      if [[ "$remote_ref" == "refs/heads/${default_ref#origin/}" ]]; then
+        echo "[vva-audit] non-fast-forward push to the default branch ${remote_ref} is not allowed." \
+          "Push blocked. If it is deliberate: VVA_AUDIT=0 git push --force ..." >&2
+        status=1
+        continue
+      fi
+      # Other branches: remote..local would name a base that is not in the bundle (the
+      # wrapper would exit 10 with a misleading message). Audit what this push adds on top
+      # of the common ancestor instead, and say so.
       if ! base="$(git merge-base "$remote_commit" "$local_commit")"; then
         echo "[vva-audit] force push to ${remote_ref} shares no history with the remote. Push blocked." >&2
         status=1
         continue
       fi
       echo "[vva-audit] force push to ${remote_ref}: remote commits after ${base:0:8} will be" \
-        "discarded; auditing only ${base:0:8}..${local_commit:0:8}." >&2
+        "discarded and are not audited; auditing only what this push adds (${base:0:8}..${local_commit:0:8})." >&2
     fi
   fi
   range="${base}..${local_commit}"
 
-  # Nothing new in this ref.
-  [[ -z "$(git rev-list "$range")" ]] && continue
+  # Nothing new in this ref (also a rewind of a non-default branch): say so, then skip.
+  if [[ -z "$(git rev-list "$range")" ]]; then
+    echo "[vva-audit] ${local_ref}: no new commits to audit (${range:0:8}..${local_commit:0:8})." >&2
+    continue
+  fi
 
   report="${REPORT_DIR}/$(date +%Y%m%d-%H%M%S)-${local_sha:0:8}.md"
   echo "[vva-audit] auditing ${range} -> ${report}" >&2
