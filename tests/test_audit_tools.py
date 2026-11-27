@@ -519,6 +519,65 @@ def test_review_rejects_a_copy_that_is_not_a_regular_file(rev: ReviewEnv) -> Non
     assert _git(rev.trusted, "for-each-ref", "refs/remotes/taller") == ""
 
 
+# The builder can swap the mailbox file for a FIFO between the regular-file check and the
+# copy. private_copy is called directly with small bounds so these tests stay fast; review()
+# uses COPY_TIMEOUT_S and COPY_MAX_KIB.
+def _private_copy(tmp_path: Path, script: str, timeout_s: int = 30) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", "-c", f'source "{REVIEW}"; {script}'],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout_s,
+    )
+
+
+def test_private_copy_stops_a_fifo_with_no_writer(tmp_path: Path) -> None:
+    fifo = tmp_path / "in.bundle"
+    os.mkfifo(fifo)
+    result = _private_copy(tmp_path, f'private_copy "{fifo}" "{tmp_path / "copy"}" 1 64')
+    assert result.returncode == 4, result.stderr
+    assert "could not copy" in result.stderr
+
+
+def test_private_copy_stops_a_fifo_with_an_endless_writer(tmp_path: Path) -> None:
+    fifo = tmp_path / "in.bundle"
+    os.mkfifo(fifo)
+    copy = tmp_path / "copy"
+    result = _private_copy(tmp_path, f'(yes > "{fifo}") 2>/dev/null & private_copy "{fifo}" "{copy}" 10 64')
+    assert result.returncode == 4, result.stderr
+    assert "could not copy" in result.stderr
+    assert "límite" not in result.stderr and "limit exceeded" not in result.stderr  # no job-status noise
+    assert copy.stat().st_size <= 64 * 1024
+
+
+def test_private_copy_rejects_a_regular_file_over_the_size_limit(tmp_path: Path) -> None:
+    big = tmp_path / "big.bundle"
+    big.write_bytes(b"\0" * (100 * 1024))
+    assert _private_copy(tmp_path, f'private_copy "{big}" "{tmp_path / "copy"}" 10 64').returncode == 4
+
+
+def test_private_copy_rejects_a_symlink(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.write_text("x\n", encoding="utf-8")
+    link = tmp_path / "link.bundle"
+    link.symlink_to(target)
+    result = _private_copy(tmp_path, f'private_copy "{link}" "{tmp_path / "copy"}" 10 64')
+    assert result.returncode == 4
+    assert "changed type" in result.stderr
+
+
+def test_private_copy_copies_a_regular_file(tmp_path: Path) -> None:
+    src = tmp_path / "in.bundle"
+    src.write_bytes(b"bundle bytes\n")
+    copy = tmp_path / "copy"
+    result = _private_copy(tmp_path, f'private_copy "{src}" "{copy}" 10 64')
+    assert result.returncode == 0, result.stderr
+    assert copy.read_bytes() == b"bundle bytes\n"
+    assert not copy.is_symlink()
+
+
 def test_review_rejects_a_bundle_without_branches(rev: ReviewEnv) -> None:
     _git(rev.taller, "-c", "user.name=t", "-c", "user.email=t@t", "tag", "-a", "v1", "-m", "v1")
     bundle = rev.tmp / "tags.bundle"

@@ -24,7 +24,8 @@
 # command failed; 5 the protected names cannot be read from the installed wrapper. Any other
 # code (bash/git killed) is also a failure.
 # The bundle is copied once to a private directory (the mailbox belongs to the audited side,
-# which could rewrite it between reads); only the listed branches are fetched, one explicit
+# which could rewrite it between reads), bounded in time and size so a FIFO swapped in cannot
+# hang the review or fill the disk; only the listed branches are fetched, one explicit
 # refspec each, with --no-tags and fetch.fsckObjects; the base is resolved to a SHA from
 # refs/heads/ before the fetch, so a smuggled refs/tags/main cannot move it.
 
@@ -44,6 +45,10 @@ readonly OWNER_PATHS=(tests/test_skills_consistency.py tests/test_audit_tools.py
 readonly GIT_META_NAMES=(.gitattributes .gitmodules conftest.py)
 # Sanity check on what was read: the wrapper's list must at least protect these.
 readonly REQUIRED_NAMES=(AGENTS.md opencode.json .opencode)
+# Bounds for the private copy of the bundle. A full bundle of main is under 1 MiB today, so
+# 256 MiB and 120 s leave a wide margin while still stopping a FIFO that never ends.
+readonly COPY_TIMEOUT_S=120
+readonly COPY_MAX_KIB=$((256 * 1024))
 
 die() {
   local code="$1"
@@ -115,6 +120,29 @@ is_plain_branch_ref() {
   [[ "$1" =~ ^refs/heads/[A-Za-z0-9._/-]+$ ]]
 }
 
+# Copies <src> (in the mailbox, which the audited side controls) to <dst> (in our private
+# 0700 directory), bounded in time and size, then checks the copy itself.
+#   - The audited side can swap <src> after the caller's regular-file check. If it swaps in
+#     a symlink, cp -P copies the symlink as a symlink and the check on <dst> rejects it.
+#   - If it swaps in a FIFO, cp reads whatever is written to it: with no writer cp would
+#     block forever, with an endless writer it would fill the disk. timeout and ulimit -f
+#     (1 KiB blocks) stop both; the result is exit 4, never a hang.
+#   - A FIFO that delivers a finite, valid bundle and closes yields a regular copy: that is
+#     no different from the builder delivering that bundle, and only the copy is read.
+# Exits 4 on any failure.
+private_copy() {
+  local src="$1" dst="$2" secs="$3" max_kib="$4"
+  (
+    ulimit -f "$max_kib"
+    # Ignored SIGXFSZ: over the limit cp gets EFBIG and exits non-zero, instead of dying by
+    # signal (which makes bash print a job-status line).
+    trap '' XFSZ
+    exec timeout --kill-after=5 "$secs" cp --no-dereference -- "$src" "$dst"
+  ) 2>/dev/null || die 4 "could not copy the bundle within ${secs}s and ${max_kib} KiB" \
+    "(replaced by a FIFO or special file, too large, or too slow)"
+  [[ -f "$dst" && ! -L "$dst" ]] || die 4 "the bundle changed type while it was being copied"
+}
+
 # The whole review, with the wrapper path as a parameter so tests can pass a synthetic one.
 review() {
   local wrapper="$1" bundle="${2:-}" base="${3:-main}"
@@ -158,12 +186,7 @@ review() {
   private="$(mktemp -d)" || die 4 "cannot create a private directory"
   # shellcheck disable=SC2064  # expand now: $private is local
   trap "rm -rf -- '${private}'" EXIT
-  cp --no-dereference -- "$bundle" "${private}/in.bundle" || die 4 "cannot copy ${bundle}"
-  # The earlier regular-file check ran on the mailbox, which can change under us; check the
-  # copy, which lives in our own 0700 directory and is stable. cp -P copies a symlink as a
-  # symlink, so a swap to a symlink (or FIFO) right before the copy is caught here.
-  [[ -f "${private}/in.bundle" && ! -L "${private}/in.bundle" ]] \
-    || die 4 "the bundle changed type while it was being copied"
+  private_copy "$bundle" "${private}/in.bundle" "$COPY_TIMEOUT_S" "$COPY_MAX_KIB"
   bundle="${private}/in.bundle"
 
   git bundle verify -q "$bundle" >/dev/null 2>&1 || die 4 "git bundle verify rejected the bundle"

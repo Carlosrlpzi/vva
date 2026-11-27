@@ -41,7 +41,8 @@ copy a secret, key, token or credential into this file; refer to it by commit an
 - **Deterministic review:** `vva-review-bundle` (root-owned in `/usr/local/bin`) flags any
   owner-only, agent-config or git-metadata path a builder bundle changes, using the installed
   wrapper's `EXCLUDED_NAMES` and `EXCLUDED_ROOT_NAMES`, so the LLM auditor is not the only
-  control. It reads a private copy of the bundle, fetches only the listed branches (plain
+  control. It reads a private copy of the bundle (bounded in time and size, so a FIFO swapped into the
+  mailbox cannot hang the review or fill the disk), fetches only the listed branches (plain
   ASCII names) with `--no-tags` and `fetch.fsckObjects`, and pins the base to a SHA first.
 - **Tests:** `tests/test_audit_tools.py` covers the hook, the wrapper's checkout and `/etc`
   checks, and the review script, with temporary repositories and a fake `sudo` (no root).
